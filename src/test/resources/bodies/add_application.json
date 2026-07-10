@@ -1,0 +1,8 @@
+{
+  "operationName": "AddApplication",
+  "variables": {
+    "applicationName": "perf-app-#{randomUuid()}",
+    "ownerEmail": "perf-#{username}@loadtest.local"
+  },
+  "query": "mutation AddApplication($applicationName: String!, $ownerEmail: String!) {\n  addApplication(applicationName: $applicationName, ownerEmail: $ownerEmail) {\n    status\n    msg\n    __typename\n  }\n}\n"
+}

@@ -1,0 +1,8 @@
+{
+  "operationName": "Login",
+  "variables": {
+    "userName": "#{username}",
+    "password": "#{password}"
+  },
+  "query": "mutation Login($userName: String!, $password: String!) { login(userName: $userName, password: $password) { token user { id userName } } }"
+}

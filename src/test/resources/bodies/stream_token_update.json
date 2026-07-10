@@ -1,0 +1,14 @@
+{
+  "operationName": "StreamTokenUpdate",
+  "variables": {
+    "streamTokens": [
+      {
+        "comment": "perf-#{username}",
+        "expires": "#{expiresAt}",
+        "token": "#{streamToken}"
+      }
+    ],
+    "applications": []
+  },
+  "query": "mutation StreamTokenUpdate($streamTokens: [StreamTokenInput!]!, $futureOnly: Boolean, $applications: [Int!]) {\n  streamTokenUpdate(\n    streamTokens: $streamTokens\n    futureOnly: $futureOnly\n    applications: $applications\n  ) {\n    id\n    __typename\n  }\n}\n"
+}

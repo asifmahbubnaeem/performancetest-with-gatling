@@ -1,0 +1,5 @@
+{
+  "operationName": "StreamTokenRandom",
+  "variables": {},
+  "query": "query StreamTokenRandom {\n  streamTokenRandom\n}\n"
+}

@@ -1,0 +1,78 @@
+name: performance-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulation:
+        description: "Which test to run"
+        type: choice
+        required: true
+        default: LoadSimulation
+        options: [LoadSimulation, StressSimulation, SpikeSimulation, SoakSimulation]
+      baseUrl:
+        description: "Target base URL"
+        required: true
+        default: "http://your-ec2-host:8080"
+      targetRps:
+        description: "Steady-state arrivals/sec (load & soak)"
+        required: false
+        default: "10"
+      steadySeconds:
+        description: "Steady-state duration in seconds"
+        required: false
+        default: "600"
+      seed:
+        description: "Re-seed tenants/users before the run?"
+        type: boolean
+        default: false
+      tenants:
+        required: false
+        default: "5"
+      usersPerTenant:
+        required: false
+        default: "10"
+
+jobs:
+  perf:
+    # IMPORTANT: use a self-hosted runner (or dedicated load-gen box) with
+    # network access to the EC2 instance. GitHub-hosted runners work for
+    # small runs but add WAN latency/jitter and limited CPU.
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Seed test data
+        if: ${{ inputs.seed == true }}
+        run: |
+          pip install requests
+          python seed/seed_users.py \
+            --base-url "${{ inputs.baseUrl }}" \
+            --tenants "${{ inputs.tenants }}" \
+            --users-per-tenant "${{ inputs.usersPerTenant }}" \
+            --out src/test/resources/data/users.csv
+
+      - name: Run Gatling simulation
+        run: |
+          mvn -B gatling:test \
+            -Dgatling.simulationClass=perf.simulations.${{ inputs.simulation }} \
+            -DbaseUrl="${{ inputs.baseUrl }}" \
+            -DtargetRps="${{ inputs.targetRps }}" \
+            -DsteadySeconds="${{ inputs.steadySeconds }}" \
+            -Dtenants="${{ inputs.tenants }}" \
+            -DusersPerTenant="${{ inputs.usersPerTenant }}"
+
+      - name: Upload Gatling report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatling-report-${{ inputs.simulation }}-${{ github.run_number }}
+          path: target/gatling/**
+          retention-days: 30

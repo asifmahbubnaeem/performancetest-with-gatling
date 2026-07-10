@@ -1,0 +1,66 @@
+# Observability stack. Run this ON the EC2 instance next to your app
+# containers (exporters must see the host + containers + Postgres).
+# Grafana/Prometheus UIs: open ports 3000/9090 in the security group
+# (restrict to your IP).
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin   # change me
+    volumes:
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    pid: host
+    network_mode: host          # exposes :9100 on the host
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - "--path.rootfs=/host"
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      # point at your existing postgres container / network
+      - DATA_SOURCE_NAME=postgresql://perf_monitor:changeme@postgres:5432/appdb?sslmode=disable
+    ports:
+      - "9187:9187"
+    restart: unless-stopped
+    # attach to the same docker network as your postgres container, e.g.:
+    # networks: [app-network]
+
+volumes:
+  prom-data:
+  grafana-data:
+
+# Recommended Grafana dashboard IDs (import via UI):
+#   1860  - Node Exporter Full (EC2 host)
+#   14282 - cAdvisor (per-container)
+#   9628  - PostgreSQL (postgres_exporter)
+# Also enable pg_stat_statements in postgres:
+#   shared_preload_libraries='pg_stat_statements'

@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s        # short interval — perf tests need fine resolution
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: node            # EC2 host metrics
+    static_configs:
+      - targets: ["host.docker.internal:9100"]   # or the EC2 private IP
+
+  - job_name: cadvisor        # per-container metrics
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # If your Java services expose Micrometer/Prometheus endpoints:
+  # - job_name: app-services
+  #   metrics_path: /actuator/prometheus
+  #   static_configs:
+  #     - targets: ["service-a:8080", "service-b:8080"]
