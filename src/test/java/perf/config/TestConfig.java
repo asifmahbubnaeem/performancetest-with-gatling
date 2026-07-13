@@ -20,6 +20,11 @@ public final class TestConfig {
     public static final int TENANTS          = integer("tenants", 5);
     public static final int USERS_PER_TENANT = integer("usersPerTenant", 10);
 
+    public static final int TOTAL_USERS = TENANTS * USERS_PER_TENANT;
+    // Pace: default one login every 3 seconds — stays under the per-IP limiter.
+    // Override with -DwarmupSeconds if you learn the real threshold.
+    public static final int WARMUP_SECONDS = integer("warmupSeconds", TOTAL_USERS * 3);
+
     // --- Injection profile (open workload model: arrival rate, not thread count) ---
     public static final double TARGET_RPS     = dbl("targetRps", 10);     // steady-state arrivals/sec
     public static final int    RAMP_SECONDS   = integer("rampSeconds", 120);

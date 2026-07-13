@@ -125,6 +125,16 @@ public final class UserWorkflows {
 
     // --- Full journey --------------------------------------------------------
 
+    private static final FeederBuilder<String> USERS_ONCE =
+            csv("data/users.csv").queue();
+ 
+    /** Paced pre-authentication of the whole user pool. */
+    public static ScenarioBuilder warmupLogins() {
+        return scenario("WarmupLogins")
+                .feed(USERS_ONCE)
+                .exec(ACQUIRE_TOKEN);
+    }
+
     public static ScenarioBuilder randomUserJourney() {
         return scenario("RandomUserJourney")
                 .feed(USERS)
