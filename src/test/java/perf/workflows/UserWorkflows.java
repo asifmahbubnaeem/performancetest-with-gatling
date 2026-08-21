@@ -42,7 +42,8 @@ public final class UserWorkflows {
             .baseUrl(TestConfig.BASE_URL)
             .acceptHeader("application/json")
             .contentTypeHeader("application/json")
-            .userAgentHeader("gatling-perf-framework");
+            .userAgentHeader("gatling-perf-framework")
+            ..header("x-isara-customer-state", "#{customer_alias}");
 
     private static final FeederBuilder<String> USERS =
             csv("data/users.csv").random();
