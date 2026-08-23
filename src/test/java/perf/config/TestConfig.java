@@ -15,6 +15,13 @@ public final class TestConfig {
 
     // --- Target system ---
     public static final String BASE_URL = str("baseUrl", "http://localhost:8080");
+    public static final String INGESTION_URL = str("ingestionUrl", BASE_URL);
+    public static final String CNS_FILE = str("cnsFile", "data/ina/heavy.zip");
+
+
+    public static final int CNS_MAX_CONCURRENT       = integer("cnsMaxConcurrent", 2);
+    public static final int CNS_POLL_INTERVAL_SECONDS = integer("cnsPollIntervalSeconds", 5);
+    public static final int CNS_POLL_MAX_ATTEMPTS     = integer("cnsPollMaxAttempts", 80);
 
     // --- Dataset shape (must match what the seeder created) ---
     public static final int TENANTS          = integer("tenants", 5);

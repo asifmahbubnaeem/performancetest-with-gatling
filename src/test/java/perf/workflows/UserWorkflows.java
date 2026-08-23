@@ -112,8 +112,14 @@ public final class UserWorkflows {
                 .check(jsonPath("$.data.streamTokenUpdate[0].id").exists())
         ).pause(2, 5);
 
+    // exitHereIfFailed() is required: GENERATE_STREAM_TOKEN only .saveAs()s
+    // "streamToken" on a 200/no-errors response. Without this guard, a
+    // failed generate (500, timeout, dropped connection) still falls through
+    // into SAVE_STREAM_TOKEN, whose body EL-interpolates #{streamToken} —
+    // producing a *different*, misleading "No attribute named 'streamToken'
+    // is defined" error that masks the real upstream failure.
     public static final ChainBuilder TOKEN_LIFECYCLE =
-            exec(GENERATE_STREAM_TOKEN).exec(SAVE_STREAM_TOKEN);
+            exec(GENERATE_STREAM_TOKEN).exitHereIfFailed().exec(SAVE_STREAM_TOKEN);
 
     public static final ChainBuilder ADD_APPLICATION = exec(
             http("GQL_AddApplication")

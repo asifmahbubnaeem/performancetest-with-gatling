@@ -1,0 +1,52 @@
+# Connection-exhaustion pass/fail signal for GA acceptance criteria #10295.
+#
+# Thresholds are the app's actual pool ceilings, not guesses:
+#   - advance app pool:  DATABASE_POOL_MAX default 25
+#       (backend/server/src/isaraql/dbPool.js)
+#   - audit pool:        AUDIT_DATABASE_POOL_MAX default 20
+#       (backend/server/src/isaraql/auditLogDbPool.js)
+# If your deployment overrides either env var, update the thresholds below
+# to match.
+#
+# No Alertmanager is wired up here — these rules still evaluate and their
+# state is queryable after a run via Prometheus's HTTP API, e.g.:
+#   curl -s http://localhost:${PROM_PORT:-9000}/api/v1/alerts \
+#     | jq '.data.alerts[] | select(.state=="firing")'
+# A non-empty result after a Soak run is a straight FAIL on the
+# "no connection exhaustion" criterion. Add Alertmanager (or a Grafana
+# contact point on the same PromQL) if you want live paging during the run.
+
+groups:
+  - name: connection-exhaustion
+    rules:
+      - alert: AdvanceAppDbPoolNearExhaustion
+        expr: sum(pg_stat_activity_count{datname="advance"}) > 0.8 * 25
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "advance app DB pool >80% of DATABASE_POOL_MAX=25"
+
+      - alert: AdvanceAppDbPoolExhausted
+        expr: sum(pg_stat_activity_count{datname="advance"}) >= 25
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "advance app DB pool at/over DATABASE_POOL_MAX=25 — GA criterion 'no connection exhaustion' FAILED"
+
+      - alert: AuditDbPoolNearExhaustion
+        expr: sum(pg_stat_activity_count{datname="audit_logs"}) > 0.8 * 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "audit DB pool >80% of AUDIT_DATABASE_POOL_MAX=20"
+
+      - alert: AuditDbPoolExhausted
+        expr: sum(pg_stat_activity_count{datname="audit_logs"}) >= 20
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "audit DB pool at/over AUDIT_DATABASE_POOL_MAX=20 — GA criterion 'no connection exhaustion' FAILED"

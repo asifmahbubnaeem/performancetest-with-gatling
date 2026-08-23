@@ -1,0 +1,23 @@
+# Custom postgres_exporter query: live connection count per database/state.
+# Explicit rather than relying on exporter-version defaults, so
+# pg_stat_activity_count exists regardless of postgres_exporter version.
+# Mounted into both postgres-exporter services via --extend.query-path.
+pg_stat_activity_count:
+  query: |
+    SELECT
+      datname,
+      state,
+      count(*) AS count
+    FROM pg_stat_activity
+    WHERE datname IS NOT NULL
+    GROUP BY datname, state
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "Database name"
+    - state:
+        usage: "LABEL"
+        description: "Backend state (active, idle, idle in transaction, ...)"
+    - count:
+        usage: "GAUGE"
+        description: "Number of backend connections in this state"

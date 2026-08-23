@@ -1,31 +1,45 @@
-# Observability stack. Run this ON the EC2 instance next to your app
-# containers (exporters must see the host + containers + Postgres).
-# Grafana/Prometheus UIs: open ports 3000/9090 in the security group
-# (restrict to your IP).
+# Full monitoring stack — Prometheus, Grafana, node_exporter, cAdvisor,
+# postgres_exporter. All ports/credentials come from .env (see .env.example).
+# Run via setup.sh, or manually: docker compose up -d
+
 services:
   prometheus:
     image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    ports:
+      - "${PROM_PORT:-9000}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./rules.yml:/etc/prometheus/rules.yml:ro
       - prom-data:/prometheus
-    ports:
-      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    extra_hosts:
+      # host.docker.internal doesn't auto-resolve on native Linux Docker
+      # Engine (only Docker Desktop) — required for the `node` scrape job
+      # to reach node-exporter's host-network :9100 on the EC2 box.
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    networks: [monitoring]
 
   grafana:
     image: grafana/grafana:11.1.0
+    container_name: grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-8443}:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin   # change me
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - grafana-data:/var/lib/grafana
     restart: unless-stopped
+    networks: [monitoring]
 
   node-exporter:
     image: prom/node-exporter:v1.8.1
+    container_name: node-exporter
     pid: host
-    network_mode: host          # exposes :9100 on the host
+    network_mode: host              # binds :9100 on the host
     volumes:
       - /:/host:ro,rslave
     command:
@@ -33,34 +47,69 @@ services:
     restart: unless-stopped
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # v0.49.1's vendored Docker client only speaks API <=1.41; Docker Engine
+    # v29+ requires >=1.44, so the docker container factory fails to
+    # register and dashboards show no per-container data at all
+    # (google/cadvisor#3793, fixed in v0.57.0 by PR #3863). Also note the
+    # registry moved from gcr.io/cadvisor/cadvisor to ghcr.io/google/cadvisor
+    # at v0.53.0 — the old gcr.io path has no v0.57.0 tag.
+    # Still pinned (not :latest): floating tags break first-hour/last-hour
+    # and run-to-run drift comparisons.
+    image: ghcr.io/google/cadvisor:v0.57.0
+    container_name: cadvisor
     ports:
-      - "8081:8080"
+      - "${CADVISOR_PORT:-8081}:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
     restart: unless-stopped
+    networks: [monitoring]
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
-    environment:
-      # point at your existing postgres container / network
-      - DATA_SOURCE_NAME=postgresql://perf_monitor:changeme@postgres:5432/appdb?sslmode=disable
+    container_name: postgres-exporter
     ports:
-      - "9187:9187"
+      - "${PGEXPORTER_PORT:-9187}:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${PG_MONITOR_USER}:${PG_MONITOR_PASSWORD}@${PG_CONTAINER_NAME}:5432/${PG_DATABASE}?sslmode=${PG_SSLMODE:-require}
+    volumes:
+      - ./queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    command:
+      - "--extend.query-path=/etc/postgres_exporter/queries.yaml"
     restart: unless-stopped
-    # attach to the same docker network as your postgres container, e.g.:
-    # networks: [app-network]
+    networks:
+      - monitoring
+      - app-net                      # must reach the postgres container by name
+
+  # Separate instance: audit-postgres is a distinct Postgres cluster/pool
+  # (AUDIT_DATABASE_POOL_MAX, default 20) from the main advance DB pool
+  # above — one postgres_exporter instance takes one DSN, so exhaustion on
+  # the audit pool needs its own exporter to be visible at all.
+  postgres-exporter-audit:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter-audit
+    ports:
+      - "${AUDIT_PGEXPORTER_PORT:-9188}:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${AUDIT_PG_MONITOR_USER:-${PG_MONITOR_USER}}:${AUDIT_PG_MONITOR_PASSWORD:-${PG_MONITOR_PASSWORD}}@${AUDIT_PG_CONTAINER_NAME:-audit-postgres}:5432/${AUDIT_PG_DATABASE:-audit_logs}?sslmode=${AUDIT_PG_SSLMODE:-require}
+    volumes:
+      - ./queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    command:
+      - "--extend.query-path=/etc/postgres_exporter/queries.yaml"
+    restart: unless-stopped
+    networks:
+      - monitoring
+      - app-net                      # audit-postgres is also on the app's default network
+
+networks:
+  monitoring:
+    name: monitoring
+  app-net:
+    external: true
+    name: ${APP_NETWORK}             # your existing app docker network
 
 volumes:
   prom-data:
   grafana-data:
-
-# Recommended Grafana dashboard IDs (import via UI):
-#   1860  - Node Exporter Full (EC2 host)
-#   14282 - cAdvisor (per-container)
-#   9628  - PostgreSQL (postgres_exporter)
-# Also enable pg_stat_statements in postgres:
-#   shared_preload_libraries='pg_stat_statements'

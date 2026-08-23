@@ -2,10 +2,17 @@ global:
   scrape_interval: 5s        # short interval — perf tests need fine resolution
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules.yml
+
 scrape_configs:
   - job_name: node            # EC2 host metrics
     static_configs:
-      - targets: ["host.docker.internal:9100"]   # or the EC2 private IP
+      # host.docker.internal only auto-resolves on Docker Desktop. On the EC2
+      # box (native Linux Docker Engine) it needs the prometheus service's
+      # extra_hosts: host.docker.internal:host-gateway entry in
+      # docker-compose.yml, or swap this target for the EC2 private IP.
+      - targets: ["host.docker.internal:9100"]
 
   - job_name: cadvisor        # per-container metrics
     static_configs:
@@ -14,6 +21,14 @@ scrape_configs:
   - job_name: postgres
     static_configs:
       - targets: ["postgres-exporter:9187"]
+        labels:
+          pool: advance-app        # DATABASE_POOL_MAX=25
+
+  - job_name: postgres-audit
+    static_configs:
+      - targets: ["postgres-exporter-audit:9187"]
+        labels:
+          pool: audit               # AUDIT_DATABASE_POOL_MAX=20
 
   # If your Java services expose Micrometer/Prometheus endpoints:
   # - job_name: app-services
