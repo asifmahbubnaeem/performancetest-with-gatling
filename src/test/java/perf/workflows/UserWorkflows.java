@@ -87,14 +87,47 @@ public final class UserWorkflows {
 
     // --- Operations --------------------------------------------------------
 
+    private static final String SESSION_EXPIRED_MSG = "Session expired. Please sign in again.";
+
+    /**
+     * Wraps a bearer-token request so a stale/invalidated JWT triggers one
+     * re-login + retry instead of a failure — mirrors what a real client SDK
+     * does transparently. Any other failure (5xx, timeout) still fails after
+     * the retry is spent, so genuine backend saturation stays visible rather
+     * than being retried away.
+     */
+    private static ChainBuilder withAuthRetry(ChainBuilder request) {
+        return exec(session -> session.set("sessionExpired", false))
+            .exec(
+                tryMax(2).on(
+                    doIf(session -> session.getBoolean("sessionExpired"))
+                        .then(
+                            exec(LOGIN).exitHereIfFailed()
+                            .exec(session -> {
+                                TOKEN_CACHE.put(session.getString("username"),
+                                        new CachedToken(session.getString("authToken"), Instant.now()));
+                                return session.set("sessionExpired", false);
+                            })
+                        )
+                    .exec(session -> session.set("gqlErrorMessage", ""))
+                    .exec(request)
+                    .exec(session -> session.set("sessionExpired",
+                            SESSION_EXPIRED_MSG.equals(session.getString("gqlErrorMessage"))))
+                )
+            );
+    }
+
     public static final ChainBuilder GENERATE_STREAM_TOKEN = exec(
-            http("GQL_StreamTokenRandom")
-                .post(GRAPHQL)
-                .header(AUTH_HEADER, "Bearer #{authToken}")
-                .body(ElFileBody("bodies/stream_token_random.json"))
-                .check(status().is(200))
-                .check(jsonPath("$.errors").notExists())
-                .check(jsonPath("$.data.streamTokenRandom").saveAs("streamToken"))
+            withAuthRetry(exec(
+                http("GQL_StreamTokenRandom")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/stream_token_random.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.streamTokenRandom").saveAs("streamToken"))
+            ))
     ).pause(1, 3);
 
     public static final ChainBuilder SAVE_STREAM_TOKEN =
@@ -103,13 +136,16 @@ public final class UserWorkflows {
                 Instant.now().plus(7, ChronoUnit.DAYS)
                              .truncatedTo(ChronoUnit.MILLIS).toString()))
         .exec(
-            http("GQL_StreamTokenUpdate")
-                .post(GRAPHQL)
-                .header(AUTH_HEADER, "Bearer #{authToken}")
-                .body(ElFileBody("bodies/stream_token_update.json"))
-                .check(status().is(200))
-                .check(jsonPath("$.errors").notExists())
-                .check(jsonPath("$.data.streamTokenUpdate[0].id").exists())
+            withAuthRetry(exec(
+                http("GQL_StreamTokenUpdate")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/stream_token_update.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.streamTokenUpdate[0].id").exists())
+            ))
         ).pause(2, 5);
 
     // exitHereIfFailed() is required: GENERATE_STREAM_TOKEN only .saveAs()s
@@ -122,13 +158,16 @@ public final class UserWorkflows {
             exec(GENERATE_STREAM_TOKEN).exitHereIfFailed().exec(SAVE_STREAM_TOKEN);
 
     public static final ChainBuilder ADD_APPLICATION = exec(
-            http("GQL_AddApplication")
-                .post(GRAPHQL)
-                .header(AUTH_HEADER, "Bearer #{authToken}")
-                .body(ElFileBody("bodies/add_application.json"))
-                .check(status().is(200))
-                .check(jsonPath("$.errors").notExists())
-                .check(jsonPath("$.data.addApplication.status").is("Success"))
+            withAuthRetry(exec(
+                http("GQL_AddApplication")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/add_application.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.addApplication.status").is("Success"))
+            ))
     ).pause(2, 5);
 
     // --- Full journey --------------------------------------------------------
