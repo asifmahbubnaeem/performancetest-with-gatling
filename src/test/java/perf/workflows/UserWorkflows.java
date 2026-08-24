@@ -19,11 +19,12 @@ import static io.gatling.javaapi.http.HttpDsl.*;
  * WHY: the app rate-limits logins ("Too many login attempts"). With an open
  * injection model every arriving session would otherwise log in, hammering
  * the limiter. Real users authenticate once and stay logged in; this cache
- * reproduces that: one login per user per ~25 minutes, shared across all
- * virtual users via a ConcurrentHashMap (Gatling runs in one JVM).
+ * reproduces that: one login per user per TestConfig.TOKEN_MAX_AGE_MINUTES,
+ * shared across all virtual users via a ConcurrentHashMap (Gatling runs in
+ * one JVM).
  *
- * JWT TTL is 30 min -> tokens are refreshed after 25 min so nothing expires
- * mid-flight, which also makes long soak runs safe.
+ * See TestConfig.TOKEN_MAX_AGE_MINUTES for the real access-token TTL this
+ * must stay under (backend default 15 min, not the 30 min once assumed here).
  */
 public final class UserWorkflows {
 
@@ -36,7 +37,7 @@ public final class UserWorkflows {
     private record CachedToken(String token, Instant acquiredAt) {}
     private static final ConcurrentHashMap<String, CachedToken> TOKEN_CACHE =
             new ConcurrentHashMap<>();
-    private static final long TOKEN_MAX_AGE_MINUTES = 25; // JWT TTL is 30
+    private static final long TOKEN_MAX_AGE_MINUTES = TestConfig.TOKEN_MAX_AGE_MINUTES;
 
     public static final HttpProtocolBuilder HTTP_PROTOCOL = http
             .baseUrl(TestConfig.BASE_URL)
