@@ -1,0 +1,24 @@
+{
+  "operationName": "NetmaskUpdate",
+  "variables": {
+    "netmasks": [
+      {
+        "name": "test_netmask_#{username}",
+        "netmask": "10.1.0.0/16",
+        "description": "",
+        "forClients": true,
+        "forServers": true,
+        "importance": 4,
+        "squashAddresses": true,
+        "zoneIn": "z_in",
+        "zoneOut": "z_out",
+        "storeName": false,
+        "enabled": true,
+        "ignored": false,
+        "reportingGroup": true,
+        "sortOrder": 0
+      }
+    ]
+  },
+  "query": "mutation NetmaskUpdate($netmasks: [NetmaskInput!]!) {\n  netmaskUpdate(netmasks: $netmasks) {\n    id\n    name\n    netmask\n    forClients\n    forServers\n    importance\n    storeName\n    squashAddresses\n    zoneIn\n    zoneOut\n    enabled\n    sortOrder\n    description\n    ignored\n    reportingGroup\n    __typename\n  }\n}\n"
+}

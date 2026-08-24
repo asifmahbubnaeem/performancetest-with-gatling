@@ -171,16 +171,38 @@ public final class UserWorkflows {
             ))
     ).pause(2, 5);
 
+    // Runs once per user, in warmupLogins() (see below) — not in the repeated
+    // randomUserJourney mix — so it executes exactly once per user and
+    // completes before any CNS ingestion (cnsCoverageScenario only starts
+    // after warmupLogins() finishes, see SoakSimulation). "name" is
+    // per-username (bodies/netmask_update.json: "test_netmask_#{username}")
+    // since netmaskUpdate is keyed by name — reusing a name across users
+    // would update the same record instead of creating distinct ones.
+    public static final ChainBuilder UPDATE_NETMASK = exec(
+            withAuthRetry(exec(
+                http("GQL_NetmaskUpdate")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/netmask_update.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.netmaskUpdate[0].id").exists())
+            ))
+    ).pause(1, 3);
+
     // --- Full journey --------------------------------------------------------
 
     private static final FeederBuilder<String> USERS_ONCE =
             csv("data/users.csv").queue();
- 
-    /** Paced pre-authentication of the whole user pool. */
+
+    /** Paced pre-authentication of the whole user pool, plus one NetmaskUpdate per user. */
     public static ScenarioBuilder warmupLogins() {
         return scenario("WarmupLogins")
                 .feed(USERS_ONCE)
-                .exec(ACQUIRE_TOKEN);
+                .exec(ACQUIRE_TOKEN)
+                .exitHereIfFailed()
+                .exec(UPDATE_NETMASK);
     }
 
     public static ScenarioBuilder randomUserJourney() {
