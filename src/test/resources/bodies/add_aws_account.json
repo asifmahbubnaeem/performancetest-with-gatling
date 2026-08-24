@@ -1,0 +1,12 @@
+{
+  "operationName": "AddAwsAccount",
+  "variables": {
+    "accountId": "#{awsAccountId}",
+    "accessKeyId": "#{awsAccessKeyId}",
+    "secretAccessKey": "#{awsSecretAccessKey}",
+    "enabled": #{awsEnabled},
+    "schedule": "#{awsSchedule}",
+    "applications": []
+  },
+  "query": "mutation AddAwsAccount($accountId: String!, $accessKeyId: String!, $secretAccessKey: String!, $enabled: Boolean, $schedule: String!, $applications: [Int!]) {\n  addAwsAccount(\n    accountId: $accountId\n    accessKeyId: $accessKeyId\n    secretAccessKey: $secretAccessKey\n    enabled: $enabled\n    schedule: $schedule\n    applications: $applications\n  ) {\n    status\n    msg\n    __typename\n  }\n}\n"
+}
