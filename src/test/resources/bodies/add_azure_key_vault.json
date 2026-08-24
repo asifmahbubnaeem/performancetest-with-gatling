@@ -1,0 +1,13 @@
+{
+  "operationName": "AddAzureKeyVault",
+  "variables": {
+    "subscriptionId": "#{azureSubscriptionId}",
+    "tenantId": "#{azureTenantId}",
+    "clientId": "#{azureClientId}",
+    "clientSecret": "#{azureClientSecret}",
+    "enabled": #{azureEnabled},
+    "schedule": "#{azureSchedule}",
+    "applications": []
+  },
+  "query": "mutation AddAzureKeyVault($subscriptionId: String!, $tenantId: String!, $clientId: String!, $clientSecret: String!, $enabled: Boolean, $schedule: String!, $applications: [Int!]) {\n  addAzureKeyVault(\n    subscriptionId: $subscriptionId\n    tenantId: $tenantId\n    clientId: $clientId\n    clientSecret: $clientSecret\n    enabled: $enabled\n    schedule: $schedule\n    applications: $applications\n  ) {\n    status\n    msg\n    __typename\n  }\n}\n"
+}

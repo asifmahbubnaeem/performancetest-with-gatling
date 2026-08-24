@@ -238,6 +238,57 @@ public final class UserWorkflows {
                 )
             );
 
+    // Runs once per TENANT, same claiming mechanism as ADD_AWS_ACCOUNT above
+    // (a separate Set — a tenant independently gets one AWS attempt and one
+    // Azure attempt). Only wired into warmupLoginsAndSoakSetup() (SoakSimulation).
+    //
+    // Unlike addAwsAccount, addAzureKeyVault calls the REAL Azure API
+    // synchronously (KeyVaultManagementClient.vaults.listBySubscription(),
+    // azureKVAccountsQL.js:53-67,102-116) before touching the DB, and returns
+    // {status:"Error", msg:"AZURE_LIST_FAILED"} or "NO_VAULTS_FOUND" when the
+    // credentials aren't a real, reachable subscription with at least one
+    // vault — a legitimate business outcome, not a backend bug. So this does
+    // NOT assert status == "Success" the way ADD_AWS_ACCOUNT does; it only
+    // checks the response is well-formed, so placeholder/test Azure creds
+    // don't inflate the soak run's failure count for an unrelated reason.
+    private static final java.util.Set<String> AZURE_KV_TENANTS_DONE =
+            ConcurrentHashMap.newKeySet();
+
+    public static final ChainBuilder ADD_AZURE_KEY_VAULT =
+        doIf(session -> AZURE_KV_TENANTS_DONE.add(session.getString("tenant_id")))
+            .then(
+                exec(session -> {
+                    if (TestConfig.AZURE_SUBSCRIPTION_ID.isBlank()
+                            || TestConfig.AZURE_TENANT_ID.isBlank()
+                            || TestConfig.AZURE_CLIENT_ID.isBlank()
+                            || TestConfig.AZURE_CLIENT_SECRET.isBlank()) {
+                        throw new IllegalStateException(
+                            "AddAzureKeyVault requires -DazureSubscriptionId / -DazureTenantId / " +
+                            "-DazureClientId / -DazureClientSecret (or the uppercased env vars) " +
+                            "to be set — none are hardcoded here on purpose, see TestConfig.");
+                    }
+                    return session
+                        .set("azureSubscriptionId", TestConfig.AZURE_SUBSCRIPTION_ID)
+                        .set("azureTenantId", TestConfig.AZURE_TENANT_ID)
+                        .set("azureClientId", TestConfig.AZURE_CLIENT_ID)
+                        .set("azureClientSecret", TestConfig.AZURE_CLIENT_SECRET)
+                        .set("azureSchedule", TestConfig.AZURE_SCHEDULE)
+                        .set("azureEnabled", TestConfig.AZURE_ENABLED);
+                })
+                .exec(
+                    withAuthRetry(exec(
+                        http("GQL_AddAzureKeyVault")
+                            .post(GRAPHQL)
+                            .header(AUTH_HEADER, "Bearer #{authToken}")
+                            .body(ElFileBody("bodies/add_azure_key_vault.json"))
+                            .check(status().is(200))
+                            .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                            .check(jsonPath("$.errors").notExists())
+                            .check(jsonPath("$.data.addAzureKeyVault.status").exists())
+                    ))
+                )
+            );
+
     // --- Full journey --------------------------------------------------------
 
     private static final FeederBuilder<String> USERS_ONCE =
@@ -252,11 +303,12 @@ public final class UserWorkflows {
 
     /**
      * SoakSimulation-only variant of warmupLogins(): same paced login pass,
-     * plus one NetmaskUpdate per user and one AddAwsAccount per tenant (first
-     * user of that tenant only). Uses its own fresh csv("data/users.csv")
-     * feeder instance — deliberately NOT the shared USERS_ONCE above — so
-     * Load/Stress/Spike simulations calling warmupLogins() are unaffected by
-     * either addition, and this doesn't compete with USERS_ONCE for rows.
+     * plus one NetmaskUpdate per user and one AddAwsAccount + AddAzureKeyVault
+     * per tenant (first user of that tenant only). Uses its own fresh
+     * csv("data/users.csv") feeder instance — deliberately NOT the shared
+     * USERS_ONCE above — so Load/Stress/Spike simulations calling
+     * warmupLogins() are unaffected by any of these additions, and this
+     * doesn't compete with USERS_ONCE for rows.
      */
     public static ScenarioBuilder warmupLoginsAndSoakSetup() {
         return scenario("WarmupLoginsAndSoakSetup")
@@ -264,7 +316,8 @@ public final class UserWorkflows {
                 .exec(ACQUIRE_TOKEN)
                 .exitHereIfFailed()
                 .exec(UPDATE_NETMASK)
-                .exec(ADD_AWS_ACCOUNT);
+                .exec(ADD_AWS_ACCOUNT)
+                .exec(ADD_AZURE_KEY_VAULT);
     }
 
     public static ScenarioBuilder randomUserJourney() {

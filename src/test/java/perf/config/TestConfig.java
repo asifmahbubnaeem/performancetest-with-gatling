@@ -88,6 +88,21 @@ public final class TestConfig {
     // and the backend's applications arg is optional (awsAccountQL.js: skips the
     // AWSAccountApplications insert entirely when the array is empty).
 
+    // --- Azure Key Vault workflow ---
+    // Same rules as the AWS block above: real credentials NEVER hardcoded/
+    // committed. "azureTenantId" here is the Azure AD tenant GUID — distinct
+    // from this framework's own app tenant_id (Workspace-Id) — named with
+    // the Azure prefix throughout to avoid confusing the two.
+    public static final String AZURE_SUBSCRIPTION_ID = str("azureSubscriptionId", "");
+    public static final String AZURE_TENANT_ID       = str("azureTenantId", "");
+    public static final String AZURE_CLIENT_ID       = str("azureClientId", "");
+    public static final String AZURE_CLIENT_SECRET   = str("azureClientSecret", "");
+    public static final String AZURE_SCHEDULE        = str("azureSchedule", "1440");
+    public static final boolean AZURE_ENABLED        = Boolean.parseBoolean(str("azureEnabled", "true"));
+    // applications: [] for the same reason as AWS above — addAzureKeyVault's
+    // arg is likewise optional (azureKVAccountsQL.js skips the
+    // AzureKeyVaultApplications insert loop when the array is empty).
+
     // --- Helpers: system property first, then env var, then default ---
     private static String str(String key, String def) {
         String v = System.getProperty(key);
