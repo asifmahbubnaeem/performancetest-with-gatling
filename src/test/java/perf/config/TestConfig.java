@@ -46,16 +46,6 @@ public final class TestConfig {
     public static final int    SLO_P99_MS       = integer("p99Ms", 1500);
     public static final double SLO_MAX_ERR_PCT  = dbl("maxErrorPct", 1.0);
 
-    // --- Auth token cache ---
-    // Must stay UNDER the backend's real access-token TTL (AUTH_ACCESS_TOKEN_TTL,
-    // backend/server/src/util/auth/jwtConstants.js — defaults to 900s = 15 min), not
-    // under some assumed 30 min. The old hardcoded 25-min refresh here was refreshing
-    // *after* the JWT had already been dead for ~10 min, so every virtual user reusing
-    // the shared cache during that window hit a real "Session expired" on its first
-    // request of the journey (confirmed via 2026-08-24 soak run: 18% of KOs). If your
-    // deployment overrides AUTH_ACCESS_TOKEN_TTL, override this to stay under it too.
-    public static final int TOKEN_MAX_AGE_MINUTES = integer("tokenMaxAgeMinutes", 10);
-
     // --- Helpers: system property first, then env var, then default ---
     private static String str(String key, String def) {
         String v = System.getProperty(key);
