@@ -1,0 +1,13 @@
+{
+  "operationName": "AddSectigoClm",
+  "variables": {
+    "apiUrl": "#{sectigoApiUrl}",
+    "tokenUrl": "#{sectigoTokenUrl}",
+    "clientId": "#{sectigoClientId}",
+    "clientSecret": "#{sectigoClientSecret}",
+    "enabled": #{sectigoEnabled},
+    "schedule": "#{sectigoSchedule}",
+    "applications": []
+  },
+  "query": "mutation AddSectigoClm($apiUrl: String!, $tokenUrl: String!, $clientId: String!, $clientSecret: String!, $enabled: Boolean, $schedule: String!, $applications: [Int!]) {\n  addSectigoClm(\n    apiUrl: $apiUrl\n    tokenUrl: $tokenUrl\n    clientId: $clientId\n    clientSecret: $clientSecret\n    enabled: $enabled\n    schedule: $schedule\n    applications: $applications\n  ) {\n    status\n    msg\n    __typename\n  }\n}\n"
+}

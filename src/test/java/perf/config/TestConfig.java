@@ -103,6 +103,21 @@ public final class TestConfig {
     // arg is likewise optional (azureKVAccountsQL.js skips the
     // AzureKeyVaultApplications insert loop when the array is empty).
 
+    // --- Sectigo Certificate Manager workflow ---
+    // clientId/clientSecret NEVER hardcoded/committed (CLAUDE.md) — blank by
+    // default, supply via -D or an (uppercased) env var. apiUrl/tokenUrl are
+    // just Sectigo's standard service endpoints, not secrets, so a real
+    // default is fine here (override if your org uses a different one).
+    public static final String SECTIGO_API_URL      = str("sectigoApiUrl", "https://admin.enterprise.sectigo.com/");
+    public static final String SECTIGO_TOKEN_URL    = str("sectigoTokenUrl",
+            "https://auth.sso.sectigo.com/auth/realms/apiclients/protocol/openid-connect/token");
+    public static final String SECTIGO_CLIENT_ID     = str("sectigoClientId", "");
+    public static final String SECTIGO_CLIENT_SECRET = str("sectigoClientSecret", "");
+    public static final String SECTIGO_SCHEDULE      = str("sectigoSchedule", "1440");
+    public static final boolean SECTIGO_ENABLED      = Boolean.parseBoolean(str("sectigoEnabled", "true"));
+    // applications: [] — same reasoning as AWS/Azure above (addSectigoClm's
+    // arg is optional too, sectigoClmQL.js skips the insert loop when empty).
+
     // --- Helpers: system property first, then env var, then default ---
     private static String str(String key, String def) {
         String v = System.getProperty(key);

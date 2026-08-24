@@ -289,6 +289,48 @@ public final class UserWorkflows {
                 )
             );
 
+    // Runs once per TENANT, same claiming mechanism as the two above (its
+    // own Set — a tenant independently gets one AWS, one Azure, and one
+    // Sectigo attempt). Only wired into warmupLoginsAndSoakSetup()
+    // (SoakSimulation). addSectigoClm is a plain DB insert like addAwsAccount
+    // (no synchronous external API call, confirmed via sectigoClmQL.js:49-115),
+    // so this asserts status == "Success" the same way ADD_AWS_ACCOUNT does.
+    private static final java.util.Set<String> SECTIGO_CLM_TENANTS_DONE =
+            ConcurrentHashMap.newKeySet();
+
+    public static final ChainBuilder ADD_SECTIGO_CLM =
+        doIf(session -> SECTIGO_CLM_TENANTS_DONE.add(session.getString("tenant_id")))
+            .then(
+                exec(session -> {
+                    if (TestConfig.SECTIGO_CLIENT_ID.isBlank()
+                            || TestConfig.SECTIGO_CLIENT_SECRET.isBlank()) {
+                        throw new IllegalStateException(
+                            "AddSectigoClm requires -DsectigoClientId / -DsectigoClientSecret " +
+                            "(or the uppercased env vars) to be set — none are hardcoded here " +
+                            "on purpose, see TestConfig.");
+                    }
+                    return session
+                        .set("sectigoApiUrl", TestConfig.SECTIGO_API_URL)
+                        .set("sectigoTokenUrl", TestConfig.SECTIGO_TOKEN_URL)
+                        .set("sectigoClientId", TestConfig.SECTIGO_CLIENT_ID)
+                        .set("sectigoClientSecret", TestConfig.SECTIGO_CLIENT_SECRET)
+                        .set("sectigoSchedule", TestConfig.SECTIGO_SCHEDULE)
+                        .set("sectigoEnabled", TestConfig.SECTIGO_ENABLED);
+                })
+                .exec(
+                    withAuthRetry(exec(
+                        http("GQL_AddSectigoClm")
+                            .post(GRAPHQL)
+                            .header(AUTH_HEADER, "Bearer #{authToken}")
+                            .body(ElFileBody("bodies/add_sectigo_clm.json"))
+                            .check(status().is(200))
+                            .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                            .check(jsonPath("$.errors").notExists())
+                            .check(jsonPath("$.data.addSectigoClm.status").is("Success"))
+                    ))
+                )
+            );
+
     // --- Full journey --------------------------------------------------------
 
     private static final FeederBuilder<String> USERS_ONCE =
@@ -304,9 +346,9 @@ public final class UserWorkflows {
     /**
      * SoakSimulation-only variant of warmupLogins(): same paced login pass,
      * plus one NetmaskUpdate per user and one AddAwsAccount + AddAzureKeyVault
-     * per tenant (first user of that tenant only). Uses its own fresh
-     * csv("data/users.csv") feeder instance — deliberately NOT the shared
-     * USERS_ONCE above — so Load/Stress/Spike simulations calling
+     * + AddSectigoClm per tenant (first user of that tenant only). Uses its
+     * own fresh csv("data/users.csv") feeder instance — deliberately NOT the
+     * shared USERS_ONCE above — so Load/Stress/Spike simulations calling
      * warmupLogins() are unaffected by any of these additions, and this
      * doesn't compete with USERS_ONCE for rows.
      */
@@ -317,7 +359,8 @@ public final class UserWorkflows {
                 .exitHereIfFailed()
                 .exec(UPDATE_NETMASK)
                 .exec(ADD_AWS_ACCOUNT)
-                .exec(ADD_AZURE_KEY_VAULT);
+                .exec(ADD_AZURE_KEY_VAULT)
+                .exec(ADD_SECTIGO_CLM);
     }
 
     public static ScenarioBuilder randomUserJourney() {
