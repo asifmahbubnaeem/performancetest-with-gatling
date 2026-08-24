@@ -3,12 +3,6 @@ package perf.simulations;
 import io.gatling.javaapi.core.Simulation;
 import perf.workflows.CnsIngestionWorkflow;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-
 import static io.gatling.javaapi.core.CoreDsl.*;
 
 /**
@@ -30,35 +24,12 @@ import static io.gatling.javaapi.core.CoreDsl.*;
  */
 public class CnsIngestionSimulation extends Simulation {
 
-    private static int countCsvDataRows(String classpathResource) {
-        try (InputStream is = CnsIngestionSimulation.class
-                    .getClassLoader().getResourceAsStream(classpathResource)) {
-            if (is == null) {
-                throw new IllegalStateException(
-                    "Could not find " + classpathResource + " on the classpath. " +
-                    "Run the uploader-selection script first (see CnsIngestionWorkflow javadoc).");
-            }
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                long lines = br.lines().count();
-                return (int) Math.max(0, lines - 1); // minus header row
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed reading " + classpathResource, e);
-        }
-    }
-
     {
         int rampSeconds = Integer.getInteger("cnsRampSeconds", 300); // 5 min default
 
-        int discoveredUploaders = countCsvDataRows("data/uploaders.csv");
-        int uploaderCount = Integer.getInteger("cnsUploaderCount", discoveredUploaders);
+        int discoveredUploaders = CnsIngestionWorkflow.discoveredUploaderCount();
+        int uploaderCount = CnsIngestionWorkflow.uploaderCount();
 
-        if (uploaderCount <= 0) {
-            throw new IllegalStateException(
-                "uploaders.csv has no data rows — nothing to run. " +
-                "Regenerate it from the current users.csv first.");
-        }
         System.out.println("[CnsIngestionSimulation] uploaders.csv has "
                 + discoveredUploaders + " data rows; injecting " + uploaderCount
                 + " users over " + rampSeconds + "s");

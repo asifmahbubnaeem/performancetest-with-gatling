@@ -37,6 +37,13 @@ public final class TestConfig {
     public static final int    RAMP_SECONDS   = integer("rampSeconds", 120);
     public static final int    STEADY_SECONDS = integer("steadySeconds", 600);
 
+    // CNS uploaders' single coverage pass, ramped across this window when CNS
+    // ingestion runs as part of SoakSimulation (rather than standalone via
+    // CnsIngestionSimulation). Defaults to the same span as STEADY_SECONDS so
+    // ingestion load is spread throughout the soak instead of one burst at
+    // the start — override independently with -DcnsRampSeconds if needed.
+    public static final int CNS_RAMP_SECONDS = integer("cnsRampSeconds", STEADY_SECONDS);
+
     // --- Stress profile ---
     public static final double STRESS_START_RPS  = dbl("stressStartRps", 5);
     public static final double STRESS_STEP_RPS   = dbl("stressStepRps", 5);

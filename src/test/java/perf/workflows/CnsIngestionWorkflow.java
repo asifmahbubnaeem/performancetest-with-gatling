@@ -5,6 +5,11 @@ import io.gatling.javaapi.core.FeederBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
 import perf.config.TestConfig;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.Semaphore;
 
@@ -174,6 +179,49 @@ public final class CnsIngestionWorkflow {
         // small buffer between this user's files (real wait already
         // happened above via polling)
         .pause(5, 15);
+
+    /**
+     * Row count of data/uploaders.csv (minus header) — how many uploaders
+     * were pre-selected, with no override applied.
+     */
+    public static int discoveredUploaderCount() {
+        return countCsvDataRows("data/uploaders.csv");
+    }
+
+    /**
+     * Uploaders to actually inject: discoveredUploaderCount(), or fewer via
+     * -DcnsUploaderCount=N (e.g. a quick partial-coverage check). Shared by
+     * both CnsIngestionSimulation (standalone) and SoakSimulation (folded
+     * into the soak run) so the override behaves identically either way.
+     */
+    public static int uploaderCount() {
+        int discovered = discoveredUploaderCount();
+        int count = Integer.getInteger("cnsUploaderCount", discovered);
+        if (count <= 0) {
+            throw new IllegalStateException(
+                "data/uploaders.csv has no data rows — nothing to run. " +
+                "Regenerate it from the current users.csv first.");
+        }
+        return count;
+    }
+
+    private static int countCsvDataRows(String classpathResource) {
+        try (InputStream is = CnsIngestionWorkflow.class
+                    .getClassLoader().getResourceAsStream(classpathResource)) {
+            if (is == null) {
+                throw new IllegalStateException(
+                    "Could not find " + classpathResource + " on the classpath. " +
+                    "Run the uploader-selection script first (see class javadoc).");
+            }
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                long lines = br.lines().count();
+                return (int) Math.max(0, lines - 1); // minus header row
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed reading " + classpathResource, e);
+        }
+    }
 
     /**
      * Deterministic coverage scenario: pre-selected uploaders only, each
