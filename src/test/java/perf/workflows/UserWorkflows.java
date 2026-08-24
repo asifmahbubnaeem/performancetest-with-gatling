@@ -171,13 +171,13 @@ public final class UserWorkflows {
             ))
     ).pause(2, 5);
 
-    // Runs once per user, in warmupLogins() (see below) — not in the repeated
-    // randomUserJourney mix — so it executes exactly once per user and
-    // completes before any CNS ingestion (cnsCoverageScenario only starts
-    // after warmupLogins() finishes, see SoakSimulation). "name" is
-    // per-username (bodies/netmask_update.json: "test_netmask_#{username}")
-    // since netmaskUpdate is keyed by name — reusing a name across users
-    // would update the same record instead of creating distinct ones.
+    // Runs once per user — only from warmupLoginsAndSoakSetup() (SoakSimulation
+    // only, see below), not from the shared warmupLogins() used by
+    // Load/Stress/Spike, and not in the repeated randomUserJourney mix.
+    // "name" is per-username (bodies/netmask_update.json:
+    // "test_netmask_#{username}") since netmaskUpdate is keyed by name —
+    // reusing a name across users would update the same record instead of
+    // creating distinct ones.
     public static final ChainBuilder UPDATE_NETMASK = exec(
             withAuthRetry(exec(
                 http("GQL_NetmaskUpdate")
@@ -191,18 +191,80 @@ public final class UserWorkflows {
             ))
     ).pause(1, 3);
 
+    // Runs once per TENANT, not per user: the first warmed-up user for a
+    // given tenant_id claims it via the atomic Set.add() below (returns true
+    // only for the first caller), so concurrent warmup arrivals for the same
+    // tenant can't double-fire it. Only wired into warmupLoginsAndSoakSetup()
+    // (SoakSimulation), same reasoning as UPDATE_NETMASK above.
+    //
+    // Credentials are NEVER hardcoded here — TestConfig.AWS_ACCESS_KEY_ID /
+    // AWS_SECRET_ACCESS_KEY have no real default and must be supplied via
+    // -D or an (uppercased) env var each run (see CLAUDE.md: never commit a
+    // secret). A missing value fails this action loudly instead of silently
+    // sending a blank credential to the API.
+    private static final java.util.Set<String> AWS_ACCOUNT_TENANTS_DONE =
+            ConcurrentHashMap.newKeySet();
+
+    public static final ChainBuilder ADD_AWS_ACCOUNT =
+        doIf(session -> AWS_ACCOUNT_TENANTS_DONE.add(session.getString("tenant_id")))
+            .then(
+                exec(session -> {
+                    if (TestConfig.AWS_ACCOUNT_ID.isBlank()
+                            || TestConfig.AWS_ACCESS_KEY_ID.isBlank()
+                            || TestConfig.AWS_SECRET_ACCESS_KEY.isBlank()) {
+                        throw new IllegalStateException(
+                            "AddAwsAccount requires -DawsAccountId / -DawsAccessKeyId / " +
+                            "-DawsSecretAccessKey (or the uppercased env vars) to be set " +
+                            "— none are hardcoded here on purpose, see TestConfig.");
+                    }
+                    return session
+                        .set("awsAccountId", TestConfig.AWS_ACCOUNT_ID)
+                        .set("awsAccessKeyId", TestConfig.AWS_ACCESS_KEY_ID)
+                        .set("awsSecretAccessKey", TestConfig.AWS_SECRET_ACCESS_KEY)
+                        .set("awsSchedule", TestConfig.AWS_SCHEDULE)
+                        .set("awsEnabled", TestConfig.AWS_ENABLED);
+                })
+                .exec(
+                    withAuthRetry(exec(
+                        http("GQL_AddAwsAccount")
+                            .post(GRAPHQL)
+                            .header(AUTH_HEADER, "Bearer #{authToken}")
+                            .body(ElFileBody("bodies/add_aws_account.json"))
+                            .check(status().is(200))
+                            .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                            .check(jsonPath("$.errors").notExists())
+                            .check(jsonPath("$.data.addAwsAccount.status").is("Success"))
+                    ))
+                )
+            );
+
     // --- Full journey --------------------------------------------------------
 
     private static final FeederBuilder<String> USERS_ONCE =
             csv("data/users.csv").queue();
 
-    /** Paced pre-authentication of the whole user pool, plus one NetmaskUpdate per user. */
+    /** Paced pre-authentication of the whole user pool. */
     public static ScenarioBuilder warmupLogins() {
         return scenario("WarmupLogins")
                 .feed(USERS_ONCE)
+                .exec(ACQUIRE_TOKEN);
+    }
+
+    /**
+     * SoakSimulation-only variant of warmupLogins(): same paced login pass,
+     * plus one NetmaskUpdate per user and one AddAwsAccount per tenant (first
+     * user of that tenant only). Uses its own fresh csv("data/users.csv")
+     * feeder instance — deliberately NOT the shared USERS_ONCE above — so
+     * Load/Stress/Spike simulations calling warmupLogins() are unaffected by
+     * either addition, and this doesn't compete with USERS_ONCE for rows.
+     */
+    public static ScenarioBuilder warmupLoginsAndSoakSetup() {
+        return scenario("WarmupLoginsAndSoakSetup")
+                .feed(csv("data/users.csv").queue())
                 .exec(ACQUIRE_TOKEN)
                 .exitHereIfFailed()
-                .exec(UPDATE_NETMASK);
+                .exec(UPDATE_NETMASK)
+                .exec(ADD_AWS_ACCOUNT);
     }
 
     public static ScenarioBuilder randomUserJourney() {

@@ -22,14 +22,19 @@ import static io.gatling.javaapi.core.CoreDsl.*;
  * mixed workload rather than as its own separate phase: pre-selected
  * uploaders are ramped in across TestConfig.CNS_RAMP_SECONDS (defaults to
  * STEADY_SECONDS), so the heavy-write/ingestion path is exercised throughout
- * the soak instead of one burst at the start. Both start only after
- * warmupLogins() finishes — CNS uploaders are drawn from the same user pool
- * and must not log in outside the paced warmup either.
+ * the soak instead of one burst at the start. Both start only after warmup
+ * finishes — CNS uploaders are drawn from the same user pool and must not
+ * log in outside the paced warmup either.
+ *
+ * Warmup here is warmupLoginsAndSoakSetup(), not the shared warmupLogins()
+ * used by Load/Stress/Spike: it does the same paced login pass, plus one
+ * NetmaskUpdate per user and one AddAwsAccount per tenant (see
+ * UserWorkflows), both completing before CNS/RandomUserJourney start.
  */
 public class SoakSimulation extends Simulation {
     {
         setUp(
-            UserWorkflows.warmupLogins()
+            UserWorkflows.warmupLoginsAndSoakSetup()
                 .injectOpen(rampUsers(TestConfig.TOTAL_USERS).during(TestConfig.WARMUP_SECONDS))
                 .andThen(
                     UserWorkflows.randomUserJourney().injectOpen(

@@ -70,6 +70,24 @@ public final class TestConfig {
     // deployment overrides AUTH_ACCESS_TOKEN_TTL, override this to stay under it too.
     public static final int TOKEN_MAX_AGE_MINUTES = integer("tokenMaxAgeMinutes", 10);
 
+    // --- AWS account workflow ---
+    // Real AWS credentials must NEVER be hardcoded or committed (CLAUDE.md:
+    // "Use env vars for secrets; do not add committed local secret files").
+    // No real default is provided for the three security-sensitive fields —
+    // supply them via -D or an (uppercased) env var each run; UserWorkflows
+    // .ADD_AWS_ACCOUNT checks for blank values and fails loudly rather than
+    // sending an empty credential to the API.
+    public static final String AWS_ACCOUNT_ID        = str("awsAccountId", "");
+    public static final String AWS_ACCESS_KEY_ID     = str("awsAccessKeyId", "");
+    public static final String AWS_SECRET_ACCESS_KEY = str("awsSecretAccessKey", "");
+    public static final String AWS_SCHEDULE          = str("awsSchedule", "1440");
+    public static final boolean AWS_ENABLED          = Boolean.parseBoolean(str("awsEnabled", "true"));
+    // applications is deliberately always sent as [] (see bodies/add_aws_account.json)
+    // — no application ID is reliably available under the same tenant at the point
+    // this fires (once per tenant, during warmup, before any addApplication call runs),
+    // and the backend's applications arg is optional (awsAccountQL.js: skips the
+    // AWSAccountApplications insert entirely when the array is empty).
+
     // --- Helpers: system property first, then env var, then default ---
     private static String str(String key, String def) {
         String v = System.getProperty(key);
