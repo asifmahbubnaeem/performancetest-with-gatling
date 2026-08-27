@@ -67,7 +67,13 @@ case "$CMD" in
 
     SELF="$(readlink -f "${BASH_SOURCE[0]}")"
     CRON_LINE="* * * * * BACKEND_CONTAINER='${BACKEND_CONTAINER}' BACKEND_LOG_PATH='${BACKEND_LOG_PATH}' SAMPLE_DIR='${SAMPLE_DIR}' '${SELF}' sample '${RUN_ID}' >> '${RUN_DIR}/cron.log' 2>&1 ${CRON_TAG}"
-    ( crontab -l 2>/dev/null | grep -vF "$CRON_TAG" ; echo "$CRON_LINE" ) | crontab -
+    # `crontab -l` (and the grep -vF reading its output) exits non-zero when
+    # the user has no crontab yet — under set -euo pipefail that aborted this
+    # whole function before CRON_LINE was ever echoed, installing an EMPTY
+    # crontab and silently no-op'ing `start` (confirmed via repro 2026-08-27:
+    # exactly the "no crontab for ec2-user" case). `|| true` keeps that from
+    # tripping -e so the real line always gets appended.
+    { crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true; echo "$CRON_LINE"; } | crontab -
     info "started — sampling every 60s into ${CSV}"
     info "stop with: $0 stop ${RUN_ID}"
     ;;
