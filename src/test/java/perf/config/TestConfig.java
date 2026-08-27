@@ -23,6 +23,11 @@ public final class TestConfig {
     public static final int CNS_POLL_INTERVAL_SECONDS = integer("cnsPollIntervalSeconds", 5);
     public static final int CNS_POLL_MAX_ATTEMPTS     = integer("cnsPollMaxAttempts", 80);
 
+    // --- ProbeNow polling --- (3s / 20 attempts = 60s cap; a TLS probe is
+    // expected to resolve far faster than a CNS ingestion job)
+    public static final int PROBE_POLL_INTERVAL_SECONDS = integer("probePollIntervalSeconds", 3);
+    public static final int PROBE_POLL_MAX_ATTEMPTS     = integer("probePollMaxAttempts", 20);
+
     // --- Dataset shape (must match what the seeder created) ---
     public static final int TENANTS          = integer("tenants", 5);
     public static final int USERS_PER_TENANT = integer("usersPerTenant", 10);

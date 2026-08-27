@@ -171,6 +171,81 @@ public final class UserWorkflows {
             ))
     ).pause(2, 5);
 
+    // Scalar-returning mutation (no sub-selection), same shape as
+    // GENERATE_STREAM_TOKEN's streamTokenRandom — .exists() is all we can
+    // assert without a field to match against.
+    public static final ChainBuilder PROBE_NOW = exec(
+            withAuthRetry(exec(
+                http("GQL_ProbeNow")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/probe_now.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.probeNow").exists())
+            ))
+    );
+
+    // Host probed by bodies/probe_now.json — kept in sync manually (no
+    // session var links the two today since the probe body is static).
+    private static final String PROBE_HOST = "1.1.1.1";
+
+    // ASSUMPTION (same caveat as CnsIngestionWorkflow.POLL_UNTIL_TERMINAL):
+    // getProbeNowResults returns one row per host (sample response: single
+    // element, fixed "id":"1"), so filtering by host and taking the last
+    // match is expected to be that host's current result. If the real API
+    // ever returns per-probe HISTORY rows instead of an upsert-by-host row,
+    // this could match a stale Success from an earlier, unrelated probe of
+    // the same host — there's no per-request correlation id in the response
+    // to rule that out. Worth a manual check before trusting this on a long
+    // soak run where PROBE_NOW fires repeatedly against the same static host.
+    private static final ChainBuilder POLL_UNTIL_PROBE_RESULT =
+        exec(session -> session.set("probePollAttempts", 0).set("probeResultStatus", "PENDING"))
+        .asLongAs(session -> {
+            String status = session.getString("probeResultStatus");
+            int attempts = session.getInt("probePollAttempts");
+            return !"Success".equals(status) && attempts < TestConfig.PROBE_POLL_MAX_ATTEMPTS;
+        }).on(
+            pause(TestConfig.PROBE_POLL_INTERVAL_SECONDS)
+            .exec(session -> session.set("probePollAttempts", session.getInt("probePollAttempts") + 1))
+            .exec(
+                withAuthRetry(exec(
+                    http("GQL_GetProbeNowResults")
+                        .post(GRAPHQL)
+                        .header(AUTH_HEADER, "Bearer #{authToken}")
+                        .body(ElFileBody("bodies/get_probe_now_results.json"))
+                        .check(status().is(200))
+                        .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                        .check(jsonPath("$.errors").notExists())
+                        // findAll(): zero matches (probe not indexed yet) and
+                        // one match are both valid states — .optional() so
+                        // zero matches doesn't fail the check.
+                        .check(jsonPath("$.data.getProbeNowResults[?(@.host=='" + PROBE_HOST + "')].resultStatus")
+                                .findAll().optional().saveAs("probeResultStatuses"))
+                ))
+            )
+            .exec(session -> {
+                java.util.List<String> statuses = session.getList("probeResultStatuses");
+                String latest = (statuses == null || statuses.isEmpty())
+                        ? "PENDING" : statuses.get(statuses.size() - 1);
+                return session.set("probeResultStatus", latest);
+            })
+            .exec(session -> {
+                if (session.getInt("probePollAttempts") >= TestConfig.PROBE_POLL_MAX_ATTEMPTS
+                        && !"Success".equals(session.getString("probeResultStatus"))) {
+                    System.err.println("[UserWorkflows] WARNING: ProbeNow for host " + PROBE_HOST +
+                        " never reached resultStatus=Success after " +
+                        TestConfig.PROBE_POLL_MAX_ATTEMPTS + " polls (last seen: " +
+                        session.getString("probeResultStatus") + ") — proceeding anyway.");
+                }
+                return session;
+            })
+        );
+
+    public static final ChainBuilder PROBE_NOW_AND_WAIT =
+            exec(PROBE_NOW).exitHereIfFailed().exec(POLL_UNTIL_PROBE_RESULT).pause(1, 3);
+
     // Runs once per user — only from warmupLoginsAndSoakSetup() (SoakSimulation
     // only, see below), not from the shared warmupLogins() used by
     // Load/Stress/Spike, and not in the repeated randomUserJourney mix.
@@ -371,9 +446,10 @@ public final class UserWorkflows {
                 .repeat(session -> 3 + java.util.concurrent.ThreadLocalRandom.current().nextInt(4))
                 .on(
                     randomSwitch().on(
-                        percent(55.0).then(GENERATE_STREAM_TOKEN),
-                        percent(30.0).then(TOKEN_LIFECYCLE),
-                        percent(15.0).then(ADD_APPLICATION)
+                        percent(45.0).then(GENERATE_STREAM_TOKEN),
+                        percent(25.0).then(TOKEN_LIFECYCLE),
+                        percent(15.0).then(ADD_APPLICATION),
+                        percent(15.0).then(PROBE_NOW_AND_WAIT)
                     )
                 );
     }
