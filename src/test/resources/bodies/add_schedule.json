@@ -1,0 +1,10 @@
+{
+  "operationName": "AddSchedule",
+  "variables": {
+    "host": "www.google.com",
+    "cron": "*/3",
+    "probeType": "tls",
+    "applications": []
+  },
+  "query": "mutation AddSchedule($host: String!, $cron: String, $probeType: String, $applications: [ApplicationInput!]!) {\n  addSchedule(\n    host: $host\n    cron: $cron\n    probeType: $probeType\n    applications: $applications\n  )\n}\n"
+}

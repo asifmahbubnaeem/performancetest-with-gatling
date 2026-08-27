@@ -406,6 +406,38 @@ public final class UserWorkflows {
                 )
             );
 
+    // Runs once per TENANT, same claiming mechanism as the three above (its
+    // own Set). Only wired into warmupLoginsAndSoakSetup() (SoakSimulation) —
+    // NOT the repeated randomUserJourney mix, since addSchedule creates a
+    // recurring cron job rather than firing a one-off action; calling it on
+    // every journey iteration would pile up duplicate schedules per tenant
+    // instead of exercising a realistic "add a schedule once" workflow.
+    //
+    // host/cron/probeType are plain config, not secrets, so — unlike AWS/
+    // Azure/Sectigo — there's no blank-credential guard here; they're
+    // hardcoded directly in bodies/add_schedule.json. addSchedule returns a
+    // bare scalar (no sub-selection), same shape as probeNow, so .exists()
+    // is all we can assert without a field to match against.
+    private static final java.util.Set<String> SCHEDULE_PROBE_TENANTS_DONE =
+            ConcurrentHashMap.newKeySet();
+
+    public static final ChainBuilder SCHEDULE_PROBE =
+        doIf(session -> SCHEDULE_PROBE_TENANTS_DONE.add(session.getString("tenant_id")))
+            .then(
+                exec(
+                    withAuthRetry(exec(
+                        http("GQL_AddSchedule")
+                            .post(GRAPHQL)
+                            .header(AUTH_HEADER, "Bearer #{authToken}")
+                            .body(ElFileBody("bodies/add_schedule.json"))
+                            .check(status().is(200))
+                            .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                            .check(jsonPath("$.errors").notExists())
+                            .check(jsonPath("$.data.addSchedule").exists())
+                    ))
+                )
+            );
+
     // --- Full journey --------------------------------------------------------
 
     private static final FeederBuilder<String> USERS_ONCE =
@@ -421,11 +453,11 @@ public final class UserWorkflows {
     /**
      * SoakSimulation-only variant of warmupLogins(): same paced login pass,
      * plus one NetmaskUpdate per user and one AddAwsAccount + AddAzureKeyVault
-     * + AddSectigoClm per tenant (first user of that tenant only). Uses its
-     * own fresh csv("data/users.csv") feeder instance — deliberately NOT the
-     * shared USERS_ONCE above — so Load/Stress/Spike simulations calling
-     * warmupLogins() are unaffected by any of these additions, and this
-     * doesn't compete with USERS_ONCE for rows.
+     * + AddSectigoClm + AddSchedule per tenant (first user of that tenant
+     * only). Uses its own fresh csv("data/users.csv") feeder instance —
+     * deliberately NOT the shared USERS_ONCE above — so Load/Stress/Spike
+     * simulations calling warmupLogins() are unaffected by any of these
+     * additions, and this doesn't compete with USERS_ONCE for rows.
      */
     public static ScenarioBuilder warmupLoginsAndSoakSetup() {
         return scenario("WarmupLoginsAndSoakSetup")
@@ -435,7 +467,8 @@ public final class UserWorkflows {
                 .exec(UPDATE_NETMASK)
                 .exec(ADD_AWS_ACCOUNT)
                 .exec(ADD_AZURE_KEY_VAULT)
-                .exec(ADD_SECTIGO_CLM);
+                .exec(ADD_SECTIGO_CLM)
+                .exec(SCHEDULE_PROBE);
     }
 
     public static ScenarioBuilder randomUserJourney() {
