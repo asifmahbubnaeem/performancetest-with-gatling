@@ -63,7 +63,7 @@ case "$CMD" in
     [ -f "$CSV" ] || csv_header > "$CSV"
     # baseline the log offset so the first sample() only counts NEW lines
     # written after start, not the container's entire history
-    docker exec "$BACKEND_CONTAINER" wc -l < "$BACKEND_LOG_PATH" | tr -d ' ' > "$LOG_OFFSET_FILE"
+    docker exec "$BACKEND_CONTAINER" sh -c "wc -l < '$BACKEND_LOG_PATH'" | tr -d ' ' > "$LOG_OFFSET_FILE"
 
     SELF="$(readlink -f "${BASH_SOURCE[0]}")"
     CRON_LINE="* * * * * BACKEND_CONTAINER='${BACKEND_CONTAINER}' BACKEND_LOG_PATH='${BACKEND_LOG_PATH}' SAMPLE_DIR='${SAMPLE_DIR}' '${SELF}' sample '${RUN_ID}' >> '${RUN_DIR}/cron.log' 2>&1 ${CRON_TAG}"
@@ -96,9 +96,12 @@ case "$CMD" in
     CONNTRACK_MAX=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null || echo NA)
 
     PREV_LINES=$(cat "$LOG_OFFSET_FILE" 2>/dev/null || echo 0)
-    TOTAL_LINES=$(docker exec "$BACKEND_CONTAINER" wc -l < "$BACKEND_LOG_PATH" 2>/dev/null | tr -d ' ' || echo "$PREV_LINES")
+    TOTAL_LINES=$(docker exec "$BACKEND_CONTAINER" sh -c "wc -l < '$BACKEND_LOG_PATH'" 2>/dev/null | tr -d ' ' || echo "$PREV_LINES")
     if [ "$TOTAL_LINES" -ge "$PREV_LINES" ] 2>/dev/null; then
-      NEW_TIMEOUT_ERRORS=$(docker exec "$BACKEND_CONTAINER" sh -c "tail -n +$((PREV_LINES + 1)) '$BACKEND_LOG_PATH' 2>/dev/null | grep -c 'timeout exceeded when trying to connect'" 2>/dev/null || echo 0)
+      # grep -c exits 1 on zero matches (while still printing "0") — the
+      # trailing `|| true` keeps that from tripping the outer `|| echo 0`
+      # fallback, which would otherwise double up and print "0" twice.
+      NEW_TIMEOUT_ERRORS=$(docker exec "$BACKEND_CONTAINER" sh -c "tail -n +$((PREV_LINES + 1)) '$BACKEND_LOG_PATH' 2>/dev/null | grep -c 'timeout exceeded when trying to connect' || true" 2>/dev/null || echo 0)
       echo "$TOTAL_LINES" > "$LOG_OFFSET_FILE"
     else
       # log rotated/truncated since last sample — can't compute a delta, skip this tick's count
