@@ -1,0 +1,9 @@
+{
+  "operationName": "ProbeNow",
+  "variables": {
+    "hosts": ["1.1.1.1"],
+    "probeType": "tls",
+    "applications": []
+  },
+  "query": "mutation ProbeNow($hosts: [String!]!, $probeType: String, $applications: [ApplicationInput!]!) {\n  probeNow(hosts: $hosts, probeType: $probeType, applications: $applications)\n}\n"
+}

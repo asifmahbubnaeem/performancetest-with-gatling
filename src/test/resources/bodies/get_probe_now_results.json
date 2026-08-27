@@ -1,0 +1,5 @@
+{
+  "operationName": "GetProbeNowResults",
+  "variables": {},
+  "query": "query GetProbeNowResults {\n  getProbeNowResults {\n    id\n    host\n    ipAddress\n    ipName\n    port\n    resultStatus\n    probeType\n    testedOn\n    applications\n    __typename\n  }\n}\n"
+}
