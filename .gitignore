@@ -78,3 +78,8 @@ desktop.ini
 .env
 .env.*
 
+# =======================================================================
+# Soak-run raw sample data (generated per-run; reports in docs/ are kept)
+# =======================================================================
+monitoring/soak-samples/
+

@@ -44,6 +44,41 @@ mvn gatling:test -Dgatling.simulationClass=perf.simulations.LoadSimulation \
 
 Report: `target/gatling/<run>/index.html`
 
+## Soak run diagnosis reports (memory leak / connection exhaustion / resource saturation)
+
+`monitoring/soak-sampler.sh` installs a per-minute cron job (on the EC2 box)
+that captures signals the Prometheus stack doesn't cover on its own — fd
+counts, TCP state, conntrack occupancy, and new backend-log connection-
+timeout errors — into a CSV. `scripts/generate_soak_reports.py` then combines
+that CSV with Prometheus's own 5s-resolution history (CPU, memory, DB pool
+usage) to produce three separate markdown reports per run, each with its own
+pass/fail-style verdict:
+
+```bash
+# On the EC2 box, right before starting the soak run:
+cd monitoring
+BACKEND_LOG_PATH=/path/to/advance.backend.log BACKEND_CONTAINER=isaraadvance-backend-1 \
+  ./soak-sampler.sh start soak-2026-08-27
+
+# ... run the soak test as usual (mvn gatling:test ...) ...
+
+# Once it finishes:
+./soak-sampler.sh stop soak-2026-08-27
+
+# From the load-gen machine (or wherever this repo is checked out), generate the reports:
+python3 scripts/generate_soak_reports.py \
+  --run-dir target/gatling/soaksimulation-<timestamp> \
+  --sampler-csv monitoring/soak-samples/soak-2026-08-27/sampler.csv \
+  --prom-url http://<EC2_HOST>:9000
+```
+
+Output lands in `docs/soak-reports/<run-id>/`: `memory-leak-report.md`,
+`connection-exhaustion-report.md`, `resource-saturation-report.md`, and an
+`index.md` summarizing all three verdicts. Requires the monitoring stack
+(`monitoring/docker-compose.yml`) to have been running for the full duration
+of the soak run — it's the source of the CPU/memory/DB-pool history; the
+sampler CSV only supplies what Prometheus doesn't already have.
+
 ## Things you must edit
 
 1. **`UserWorkflows.java`** — the endpoints/payloads are placeholders. Replace
