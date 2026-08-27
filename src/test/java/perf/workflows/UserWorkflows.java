@@ -246,6 +246,104 @@ public final class UserWorkflows {
     public static final ChainBuilder PROBE_NOW_AND_WAIT =
             exec(PROBE_NOW).exitHereIfFailed().exec(POLL_UNTIL_PROBE_RESULT).pause(1, 3);
 
+    // reportType names, 1-indexed (index 0 unused) — no enum mapping is
+    // exposed by the API itself, this is just what these values were
+    // reported to mean when this workflow was added; not verified against
+    // the backend beyond that. Spaces stripped (vs. the human-readable
+    // names as given) so these double as Gatling request-name suffixes,
+    // consistent with the no-spaces naming used everywhere else (GQL_Login,
+    // GQL_StreamTokenRandom, ...).
+    private static final String[] REPORT_TYPE_NAMES = {
+        null,                          // 0 (unused)
+        "ExecutiveSummary",            // 1
+        "PQCCompliance",               // 2
+        "ZoneSummary",                 // 3
+        "ExecutiveTopThreats",         // 4
+        "ZoneReport",                  // 5
+        "ComplianceOverall",           // 6
+        "ComplianceByZone",            // 7
+        "ComplianceDetail",            // 8
+        "CriticalSecurityAssessment",  // 9
+        "PQCReadiness",                // 10
+        "PCIDSSCompliance",            // 11
+    };
+
+    // requestReport returns an object (no fixed "Success" status literal
+    // like addApplication/addAwsAccount use), so this checks reportID
+    // exists rather than asserting a specific status value.
+    public static final ChainBuilder REQUEST_REPORT = exec(session -> {
+                int reportType = TestConfig.REQUEST_REPORT_TYPE >= 1 && TestConfig.REQUEST_REPORT_TYPE <= 11
+                        ? TestConfig.REQUEST_REPORT_TYPE
+                        : 1 + java.util.concurrent.ThreadLocalRandom.current().nextInt(11);
+                return session.set("reportType", reportType)
+                              .set("reportTypeName", REPORT_TYPE_NAMES[reportType]);
+            })
+            .exec(
+                withAuthRetry(exec(
+                    http("GQL_RequestReport_#{reportTypeName}")
+                        .post(GRAPHQL)
+                        .header(AUTH_HEADER, "Bearer #{authToken}")
+                        .body(ElFileBody("bodies/request_report.json"))
+                        .check(status().is(200))
+                        .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                        .check(jsonPath("$.errors").notExists())
+                        .check(jsonPath("$.data.requestReport.reportID").exists())
+                ))
+            );
+
+    // Per instruction: check ALL objects in getReportRequests, not just the
+    // one this request just created — there's no per-request correlation
+    // used here (unlike the host-filtered ProbeNow check). Caveat: this
+    // means a pre-existing report stuck at a non-Success status (e.g. a
+    // prior failed request) would make this condition never become true
+    // for the rest of the run — that's a real risk given REQUEST_REPORT
+    // runs repeatedly with random types throughout randomUserJourney, so a
+    // single stuck/failed report anywhere in the tenant's history blocks
+    // every subsequent poll here until POLL_MAX_ATTEMPTS gives up. Empty
+    // list is treated as NOT done (still pending), not vacuously successful
+    // — our own just-submitted request should eventually appear in it.
+    private static final ChainBuilder POLL_UNTIL_ALL_REPORTS_SUCCESS =
+        exec(session -> session.set("reportPollAttempts", 0).set("allReportsSuccess", false))
+        .asLongAs(session -> {
+            boolean done = session.getBoolean("allReportsSuccess");
+            int attempts = session.getInt("reportPollAttempts");
+            return !done && attempts < TestConfig.REPORT_POLL_MAX_ATTEMPTS;
+        }).on(
+            pause(TestConfig.REPORT_POLL_INTERVAL_SECONDS)
+            .exec(session -> session.set("reportPollAttempts", session.getInt("reportPollAttempts") + 1))
+            .exec(
+                withAuthRetry(exec(
+                    http("GQL_GetReportRequests")
+                        .post(GRAPHQL)
+                        .header(AUTH_HEADER, "Bearer #{authToken}")
+                        .body(ElFileBody("bodies/get_report_requests.json"))
+                        .check(status().is(200))
+                        .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                        .check(jsonPath("$.errors").notExists())
+                        .check(jsonPath("$.data.getReportRequests[*].status")
+                                .findAll().optional().saveAs("allReportStatuses"))
+                ))
+            )
+            .exec(session -> {
+                java.util.List<String> statuses = session.getList("allReportStatuses");
+                boolean allSuccess = statuses != null && !statuses.isEmpty()
+                        && statuses.stream().allMatch("Success"::equals);
+                return session.set("allReportsSuccess", allSuccess);
+            })
+            .exec(session -> {
+                if (session.getInt("reportPollAttempts") >= TestConfig.REPORT_POLL_MAX_ATTEMPTS
+                        && !session.getBoolean("allReportsSuccess")) {
+                    System.err.println("[UserWorkflows] WARNING: getReportRequests still had a " +
+                        "non-Success entry after " + TestConfig.REPORT_POLL_MAX_ATTEMPTS +
+                        " polls — proceeding anyway.");
+                }
+                return session;
+            })
+        );
+
+    public static final ChainBuilder REQUEST_REPORT_AND_WAIT =
+            exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5);
+
     // Runs once per user — only from warmupLoginsAndSoakSetup() (SoakSimulation
     // only, see below), not from the shared warmupLogins() used by
     // Load/Stress/Spike, and not in the repeated randomUserJourney mix.
@@ -479,10 +577,11 @@ public final class UserWorkflows {
                 .repeat(session -> 3 + java.util.concurrent.ThreadLocalRandom.current().nextInt(4))
                 .on(
                     randomSwitch().on(
-                        percent(45.0).then(GENERATE_STREAM_TOKEN),
-                        percent(25.0).then(TOKEN_LIFECYCLE),
+                        percent(40.0).then(GENERATE_STREAM_TOKEN),
+                        percent(20.0).then(TOKEN_LIFECYCLE),
                         percent(15.0).then(ADD_APPLICATION),
-                        percent(15.0).then(PROBE_NOW_AND_WAIT)
+                        percent(15.0).then(PROBE_NOW_AND_WAIT),
+                        percent(10.0).then(REQUEST_REPORT_AND_WAIT)
                     )
                 );
     }

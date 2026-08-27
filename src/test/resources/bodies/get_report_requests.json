@@ -1,0 +1,5 @@
+{
+  "operationName": "GetReportRequests",
+  "variables": {},
+  "query": "query GetReportRequests {\n  getReportRequests {\n    reportID\n    requestTimestamp\n    generationTimestamp\n    requestor\n    reportType\n    pdf\n    status\n    viewName\n    lang\n    __typename\n  }\n}\n"
+}

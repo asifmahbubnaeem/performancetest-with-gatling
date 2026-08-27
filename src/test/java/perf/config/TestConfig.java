@@ -28,6 +28,16 @@ public final class TestConfig {
     public static final int PROBE_POLL_INTERVAL_SECONDS = integer("probePollIntervalSeconds", 3);
     public static final int PROBE_POLL_MAX_ATTEMPTS     = integer("probePollMaxAttempts", 20);
 
+    // --- RequestReport --- 0 (default) = pick a random type (1-11) per
+    // request; set -DreportType=N to pin every request to one specific type
+    // instead (e.g. for a smoke test isolating one report's behavior).
+    public static final int REQUEST_REPORT_TYPE = integer("reportType", 0);
+
+    // --- RequestReport polling --- PDF generation is expected to take
+    // longer than a TLS probe; default 5s / 60 attempts = 5min cap.
+    public static final int REPORT_POLL_INTERVAL_SECONDS = integer("reportPollIntervalSeconds", 5);
+    public static final int REPORT_POLL_MAX_ATTEMPTS     = integer("reportPollMaxAttempts", 60);
+
     // --- Dataset shape (must match what the seeder created) ---
     public static final int TENANTS          = integer("tenants", 5);
     public static final int USERS_PER_TENANT = integer("usersPerTenant", 10);

@@ -1,0 +1,9 @@
+{
+  "operationName": "RequestReport",
+  "variables": {
+    "reportType": #{reportType},
+    "zones": [],
+    "locale": "en-US"
+  },
+  "query": "mutation RequestReport($reportType: Int!, $viewId: BigInt, $zones: [String!], $locale: String) {\n  requestReport(\n    reportType: $reportType\n    viewId: $viewId\n    zones: $zones\n    locale: $locale\n  ) {\n    reportID\n    requestTimestamp\n    generationTimestamp\n    requestor\n    reportType\n    pdf\n    status\n    lang\n    __typename\n  }\n}\n"
+}
