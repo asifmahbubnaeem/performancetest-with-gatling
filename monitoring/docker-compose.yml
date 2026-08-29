@@ -55,6 +55,14 @@ services:
     # at v0.53.0 — the old gcr.io path has no v0.57.0 tag.
     # Still pinned (not :latest): floating tags break first-hour/last-hour
     # and run-to-run drift comparisons.
+    # Gated behind the "cadvisor" compose profile so it can be brought up or
+    # left out independently of the rest of the stack (measured contributor
+    # to host CPU under load — see setup.sh's ENABLE_CADVISOR). A service
+    # under a non-active profile is invisible to plain `docker compose up
+    # -d`/`ps`/`down`, same mechanism isaraadvance's own
+    # docker-compose-simple.yml uses for codescan-provisioner's `[infra]`
+    # profile.
+    profiles: ["cadvisor"]
     image: ghcr.io/google/cadvisor:v0.57.0
     container_name: cadvisor
     ports:

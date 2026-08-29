@@ -5,7 +5,18 @@
 # Usage:
 #   cp .env.example .env      # edit values first
 #   chmod +x setup.sh
-#   ./setup.sh
+#   ./setup.sh                          # cAdvisor included (default)
+#   ENABLE_CADVISOR=false ./setup.sh    # cAdvisor left out entirely
+#
+# cAdvisor measured at ~0.75 of a CPU core continuously on a 4-vCPU soak-test
+# box (2026-08-29) — a real, quantified contributor to host CPU pressure
+# during a soak run, distinct from the rest of the stack (prometheus/grafana/
+# node-exporter/postgres-exporter were all <2% CPU in the same sample).
+# ENABLE_CADVISOR lets you run the soak test with and without it to isolate
+# how much of any given sys-load reading is monitoring overhead vs. the app/
+# DB/search stack's own demand. To toggle it on an already-running stack
+# without re-running this whole script, see "Toggling cAdvisor" printed at
+# the end.
 #
 # What it does:
 #   1. Sanity checks (docker, compose, .env)
@@ -44,6 +55,16 @@ AUDIT_PG_MONITOR_PASSWORD="${AUDIT_PG_MONITOR_PASSWORD:-$PG_MONITOR_PASSWORD}"
 #   docker exec <container> env | grep -i POSTGRES_USER
 : "${PG_SUPERUSER:?set in .env — see docker exec ... env | grep POSTGRES_USER}"
 : "${AUDIT_PG_SUPERUSER:?set in .env — see docker exec ... env | grep POSTGRES_USER}"
+
+# Env var (not .env-only) so a one-off `ENABLE_CADVISOR=false ./setup.sh`
+# works without editing .env. Accepts true/false; anything else is rejected
+# rather than silently falling back, since a typo here would otherwise
+# silently include or exclude a real CPU-cost container.
+ENABLE_CADVISOR="${ENABLE_CADVISOR:-true}"
+case "${ENABLE_CADVISOR}" in
+  true|false) ;;
+  *) fail "ENABLE_CADVISOR must be 'true' or 'false', got '${ENABLE_CADVISOR}'" ;;
+esac
 ok "prerequisites"
 
 # --- 2. Private IP + prometheus.yml -----------------------------------------
@@ -63,10 +84,6 @@ scrape_configs:
     static_configs:
       - targets: ["${PRIVATE_IP}:9100"]
 
-  - job_name: cadvisor
-    static_configs:
-      - targets: ["${PRIVATE_IP}:${CADVISOR_PORT:-8081}"]
-
   - job_name: postgres
     static_configs:
       - targets: ["${PRIVATE_IP}:${PGEXPORTER_PORT:-9187}"]
@@ -79,11 +96,26 @@ scrape_configs:
         labels:
           pool: audit
 EOF
-ok "generated prometheus.yml (with rules.yml + audit exporter wired in)"
+# cadvisor job appended separately (not unconditionally above) so that with
+# ENABLE_CADVISOR=false, prometheus never scrapes a target that was
+# deliberately never started — leaving it in would show as a permanently
+# "down" target and would trip the target-health check in step 6 for a
+# reason that has nothing to do with a real problem.
+if [ "${ENABLE_CADVISOR}" = "true" ]; then
+  cat >> prometheus.yml <<EOF
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["${PRIVATE_IP}:${CADVISOR_PORT:-8081}"]
+EOF
+fi
+ok "generated prometheus.yml (with rules.yml + audit exporter wired in; cadvisor ${ENABLE_CADVISOR})"
 
 # --- 3. Port availability ----------------------------------------------------
-for p in "${PROM_PORT:-9000}" "${GRAFANA_PORT:-8443}" 9100 \
-         "${CADVISOR_PORT:-8081}" "${PGEXPORTER_PORT:-9187}" "${AUDIT_PGEXPORTER_PORT:-9188}"; do
+PORTS_TO_CHECK=("${PROM_PORT:-9000}" "${GRAFANA_PORT:-8443}" 9100 \
+                "${PGEXPORTER_PORT:-9187}" "${AUDIT_PGEXPORTER_PORT:-9188}")
+[ "${ENABLE_CADVISOR}" = "true" ] && PORTS_TO_CHECK+=("${CADVISOR_PORT:-8081}")
+for p in "${PORTS_TO_CHECK[@]}"; do
   if ss -tln "( sport = :$p )" | grep -q ":$p"; then
     # tolerate ports already held by OUR containers (re-run scenario)
     if docker ps --format '{{.Names}} {{.Ports}}' | grep -q ":$p->"; then
@@ -174,14 +206,20 @@ else
 fi
 
 # --- 5. Bring it up -----------------------------------------------------------
-info "starting stack..."
-docker compose up -d
+info "starting stack (cadvisor ${ENABLE_CADVISOR})..."
+COMPOSE_PROFILE_ARGS=()
+[ "${ENABLE_CADVISOR}" = "true" ] && COMPOSE_PROFILE_ARGS=(--profile cadvisor)
+docker compose "${COMPOSE_PROFILE_ARGS[@]}" up -d
 sleep 8
 
 # --- 6. Verify ----------------------------------------------------------------
 curl -sf "localhost:9100/metrics" >/dev/null            && ok "node_exporter (:9100)"        || fail "node_exporter not responding"
-curl -sf "localhost:${CADVISOR_PORT:-8081}/metrics" >/dev/null \
-                                                        && ok "cadvisor (:${CADVISOR_PORT:-8081})" || fail "cadvisor not responding"
+if [ "${ENABLE_CADVISOR}" = "true" ]; then
+  curl -sf "localhost:${CADVISOR_PORT:-8081}/metrics" >/dev/null \
+                                                          && ok "cadvisor (:${CADVISOR_PORT:-8081})" || fail "cadvisor not responding"
+else
+  info "cadvisor skipped (ENABLE_CADVISOR=false)"
+fi
 PGUP=$(curl -sf "localhost:${PGEXPORTER_PORT:-9187}/metrics" | grep -E '^pg_up ' | awk '{print $2}')
 [ "${PGUP}" = "1" ] && ok "postgres_exporter connected (pg_up 1)" \
   || fail "postgres_exporter up but pg_up=${PGUP:-none} — check DSN/network/role"
@@ -231,6 +269,16 @@ Next steps:
      - cAdvisor dashboard once #4 below is resolved (14282 or 19792 are the common ones for v0.49.x)
 
 
-Teardown:  docker compose down          (keep data)
-           docker compose down -v       (wipe metrics + dashboards)
+Toggling cAdvisor on an already-running stack (no need to re-run this script):
+  Stop it (rest of the stack keeps running):
+    docker compose stop cadvisor
+  Start it again:
+    docker compose --profile cadvisor up -d cadvisor
+  Re-run this script with the other mode instead (recreates prometheus.yml too):
+    ENABLE_CADVISOR=false ./setup.sh    # or true
+
+Teardown:  docker compose --profile cadvisor down          (keep data)
+           docker compose --profile cadvisor down -v       (wipe metrics + dashboards)
+           (add --profile cadvisor so a currently-running cadvisor container is
+           actually included in the teardown, matching whatever it was up with)
 EOF
