@@ -2,7 +2,7 @@
   "operationName": "AddSchedule",
   "variables": {
     "host": "www.google.com",
-    "cron": "*/3",
+    "cron": "*/60",
     "probeType": "tls",
     "applications": []
   },
