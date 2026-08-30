@@ -565,8 +565,8 @@ public final class UserWorkflows {
                 .exec(UPDATE_NETMASK)
                 .exec(ADD_AWS_ACCOUNT)
                 .exec(ADD_AZURE_KEY_VAULT)
-                .exec(ADD_SECTIGO_CLM)
-                .exec(SCHEDULE_PROBE);
+                .exec(ADD_SECTIGO_CLM);
+                // .exec(SCHEDULE_PROBE);
     }
 
     public static ScenarioBuilder randomUserJourney() {
