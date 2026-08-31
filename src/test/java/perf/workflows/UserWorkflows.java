@@ -341,8 +341,46 @@ public final class UserWorkflows {
             })
         );
 
+    // Live check (not an in-process cache — real server state, so it also
+    // covers tenants seeded by an earlier run or by the dedicated
+    // CnsIngestionCoverage scenario running concurrently) for whether this
+    // tenant has at least one successfully-ingested data log. Requesting a
+    // report before that always fails with "No device data exist: cannot
+    // generate report." (a real backend error, not a bug).
+    private static final ChainBuilder CHECK_TENANT_HAS_DATA =
+        exec(
+            withAuthRetry(exec(
+                http("GQL_GetDataLogsCheck")
+                    .post(GRAPHQL)
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .body(ElFileBody("bodies/get_data_logs_any.json"))
+                    .check(status().is(200))
+                    .check(jsonPath("$.errors[0].message").optional().saveAs("gqlErrorMessage"))
+                    .check(jsonPath("$.errors").notExists())
+                    .check(jsonPath("$.data.dataLog.dataLogs[*].status")
+                            .findAll().optional().saveAs("tenantDataLogStatuses"))
+            ))
+        )
+        .exec(session -> {
+            java.util.List<String> statuses = session.getList("tenantDataLogStatuses");
+            boolean hasData = statuses != null && statuses.contains("SUCCESS");
+            return session.set("tenantHasUploadedData", hasData);
+        });
+
+    // Before requesting any report type: check for existing data via
+    // CHECK_TENANT_HAS_DATA; if none found, trigger a CNS ingestion upload
+    // for this tenant instead of requesting a report guaranteed to fail.
     public static final ChainBuilder REQUEST_REPORT_AND_WAIT =
-            exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5);
+            exec(CHECK_TENANT_HAS_DATA)
+            .exec(
+                doIfOrElse(session -> session.getBoolean("tenantHasUploadedData"))
+                    .then(
+                        exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5)
+                    )
+                    .orElse(
+                        exec(CnsIngestionWorkflow.UPLOAD_ONE_RANDOM_FILE)
+                    )
+            );
 
     // Runs once per user — only from warmupLoginsAndSoakSetup() (SoakSimulation
     // only, see below), not from the shared warmupLogins() used by

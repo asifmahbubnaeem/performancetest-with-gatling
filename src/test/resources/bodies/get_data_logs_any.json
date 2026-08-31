@@ -1,0 +1,8 @@
+{
+  "operationName": "GetDataLogs",
+  "variables": {
+    "paging": { "offset": 0, "limit": 50 },
+    "filter": { "search": "" }
+  },
+  "query": "query GetDataLogs($paging: PagingInput, $filter: DataLogFilterInput, $sorting: DataLogSortingInput) {\n  dataLog(sorting: $sorting, paging: $paging, filter: $filter) {\n    paging {\n      count\n      __typename\n    }\n    dataLogs {\n      id\n      dataSource\n      metadata\n      fileName\n      status\n      summary\n      detail\n      errorSummary\n      keyCount\n      certificateCount\n      sourceIdentifier\n      runAt\n      duration\n      addedAt\n      addedBy {\n        id\n        humanName\n        __typename\n      }\n      lastModified\n      __typename\n    }\n    __typename\n  }\n}\n"
+}

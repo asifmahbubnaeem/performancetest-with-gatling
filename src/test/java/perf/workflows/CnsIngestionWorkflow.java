@@ -12,6 +12,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
@@ -179,6 +180,22 @@ public final class CnsIngestionWorkflow {
         // small buffer between this user's files (real wait already
         // happened above via polling)
         .pause(5, 15);
+
+    // Ad-hoc single-file upload for a tenant found (via a live GetDataLogs
+    // check — see UserWorkflows.REQUEST_REPORT_AND_WAIT) to have no
+    // SUCCESS data log yet. Picks one file from FILES rather than walking
+    // the whole set, and reuses the same gated upload+poll pipeline and
+    // concurrency cap as cnsCoverageScenario() so it can't pile up on top
+    // of the dedicated CNS coverage scenario running concurrently.
+    public static final ChainBuilder UPLOAD_ONE_RANDOM_FILE =
+        exec(session -> {
+            String relPath = FILES.get(ThreadLocalRandom.current().nextInt(FILES.size()));
+            String baseName = relPath.contains("/")
+                    ? relPath.substring(relPath.lastIndexOf('/') + 1)
+                    : relPath;
+            return session.set("cnsFile", relPath).set("cnsFileName", baseName);
+        })
+        .exec(UPLOAD_ONE_FILE);
 
     /**
      * Row count of data/uploaders.csv (minus header) — how many uploaders
