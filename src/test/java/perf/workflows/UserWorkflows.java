@@ -373,13 +373,18 @@ public final class UserWorkflows {
     public static final ChainBuilder REQUEST_REPORT_AND_WAIT =
             exec(CHECK_TENANT_HAS_DATA)
             .exec(
-                doIfOrElse(session -> session.getBoolean("tenantHasUploadedData"))
+            /*    doIfOrElse(session -> session.getBoolean("tenantHasUploadedData"))
                     .then(
                         exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5)
                     )
                     .orElse(
                         exec(CnsIngestionWorkflow.UPLOAD_ONE_RANDOM_FILE)
-                    )
+                    ) 
+	*/        
+	         doIf(session -> session.getBoolean("tenantHasUploadedData"))
+                  .then(
+                      exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5)
+                  )
             );
 
     // Runs once per user — only from warmupLoginsAndSoakSetup() (SoakSimulation
@@ -615,8 +620,8 @@ public final class UserWorkflows {
                 .repeat(session -> 3 + java.util.concurrent.ThreadLocalRandom.current().nextInt(4))
                 .on(
                     randomSwitch().on(
-                        percent(40.0).then(GENERATE_STREAM_TOKEN),
-                        percent(20.0).then(TOKEN_LIFECYCLE),
+                        //percent(40.0).then(GENERATE_STREAM_TOKEN),
+                        //percent(20.0).then(TOKEN_LIFECYCLE),
                         percent(15.0).then(ADD_APPLICATION),
                         percent(15.0).then(PROBE_NOW_AND_WAIT),
                         percent(10.0).then(REQUEST_REPORT_AND_WAIT)
