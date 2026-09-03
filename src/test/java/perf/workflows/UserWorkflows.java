@@ -394,6 +394,16 @@ public final class UserWorkflows {
             return session.set("tenantHasUploadedData", hasData);
         });
 
+    // Process-wide cap on concurrent report-generation pipelines (mirrors
+    // CnsIngestionWorkflow.UPLOAD_SLOTS / PROBE_SLOTS above). Held across
+    // REQUEST_REPORT AND its status-polling, not just the initial HTTP call, so
+    // a slow/stuck report occupies its slot the whole time — this is what
+    // actually bounds concurrent backend load, since targetRps alone only
+    // controls arrival rate, not how many chains pile up when polling runs
+    // long under load.
+    private static final int MAX_CONCURRENT_REPORTS = TestConfig.REPORT_MAX_CONCURRENT;
+    private static final Semaphore REPORT_SLOTS = new Semaphore(MAX_CONCURRENT_REPORTS, true);
+
     // Before requesting any report type: check for existing data via
     // CHECK_TENANT_HAS_DATA; if none found, trigger a CNS ingestion upload
     // for this tenant instead of requesting a report guaranteed to fail.
@@ -406,11 +416,24 @@ public final class UserWorkflows {
                     )
                     .orElse(
                         exec(CnsIngestionWorkflow.UPLOAD_ONE_RANDOM_FILE)
-                    ) 
-	*/        
+                    )
+	*/
 	         doIf(session -> session.getBoolean("tenantHasUploadedData"))
                   .then(
-                      exec(REQUEST_REPORT).exitHereIfFailed().exec(POLL_UNTIL_ALL_REPORTS_SUCCESS).pause(2, 5)
+                      // NOTE: no exitHereIfFailed() between acquire and release — same
+                      // reasoning as PROBE_SLOTS above: exitHereIfFailed() aborts the
+                      // WHOLE scenario for this virtual user, which would skip the
+                      // release step and permanently leak the permit. A failed
+                      // REQUEST_REPORT now falls through into polling instead of
+                      // aborting the session; POLL_UNTIL_ALL_REPORTS_SUCCESS is still
+                      // bounded by REPORT_POLL_MAX_ATTEMPTS, so this can't hang.
+                      exec(session -> { REPORT_SLOTS.acquireUninterruptibly(); return session; })
+                      .exec(REQUEST_REPORT)
+                      .exec(POLL_UNTIL_ALL_REPORTS_SUCCESS)
+                      // release must run whether REQUEST_REPORT/polling passed or
+                      // failed — this is the last step so it always executes next
+                      .exec(session -> { REPORT_SLOTS.release(); return session; })
+                      .pause(2, 5)
                   )
             );
 

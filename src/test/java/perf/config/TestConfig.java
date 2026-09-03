@@ -45,6 +45,14 @@ public final class TestConfig {
     public static final int REPORT_POLL_INTERVAL_SECONDS = integer("reportPollIntervalSeconds", 5);
     public static final int REPORT_POLL_MAX_ATTEMPTS     = integer("reportPollMaxAttempts", 60);
 
+    // Process-wide cap on concurrent report-generation pipelines (mirrors
+    // CNS_MAX_CONCURRENT / PROBE_MAX_CONCURRENT above) — the slot is held across
+    // the requestReport call AND its status-polling, not just the initial HTTP
+    // request, so this bounds real concurrent backend load regardless of
+    // targetRps or how long a report takes to finish under load.
+    // DreportMaxConcurrent=12 to override the default of 5 concurrent reports.
+    public static final int REPORT_MAX_CONCURRENT = integer("reportMaxConcurrent", 10);
+
     // --- Dataset shape (must match what the seeder created) ---
     public static final int TENANTS          = integer("tenants", 5);
     public static final int USERS_PER_TENANT = integer("usersPerTenant", 10);
