@@ -9,7 +9,6 @@ import perf.config.TestConfig;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
 
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
@@ -244,34 +243,8 @@ public final class UserWorkflows {
             })
         );
 
-    // Process-wide cap on concurrent ProbeNow pipelines (mirrors
-    // CnsIngestionWorkflow.UPLOAD_SLOTS). Held across PROBE_NOW AND its
-    // result-polling, not just the initial HTTP call, so a slow/stuck probe
-    // occupies its slot the whole time — this is what actually bounds
-    // concurrent backend load, since targetRps alone only controls arrival
-    // rate, not how many chains pile up when polling runs long under load.
-    private static final int MAX_CONCURRENT_PROBES = TestConfig.PROBE_MAX_CONCURRENT;
-    private static final Semaphore PROBE_SLOTS = new Semaphore(MAX_CONCURRENT_PROBES, true);
-
-    // NOTE: no exitHereIfFailed() between acquire and release (unlike the
-    // pre-semaphore version of this chain) — exitHereIfFailed() aborts the
-    // WHOLE scenario for this virtual user, which would skip the release
-    // step below and permanently leak that permit. Enough leaked permits
-    // over a long soak run would deadlock every future PROBE_NOW_AND_WAIT
-    // call (acquireUninterruptibly() blocks forever). Same reasoning as
-    // CnsIngestionWorkflow.UPLOAD_ONE_FILE's own release-always-runs comment.
-    // A failed ProbeNow now falls through into polling instead of aborting
-    // the session; POLL_UNTIL_PROBE_RESULT is still bounded by
-    // PROBE_POLL_MAX_ATTEMPTS, so this can't hang, just runs its course and
-    // logs the existing "never reached resultStatus=Success" warning.
     public static final ChainBuilder PROBE_NOW_AND_WAIT =
-            exec(session -> { PROBE_SLOTS.acquireUninterruptibly(); return session; })
-            .exec(PROBE_NOW)
-            .exec(POLL_UNTIL_PROBE_RESULT)
-            // release must run whether ProbeNow/polling passed or failed —
-            // this is the last step so it always executes next in the chain
-            .exec(session -> { PROBE_SLOTS.release(); return session; })
-            .pause(1, 3);
+            exec(PROBE_NOW).exitHereIfFailed().exec(POLL_UNTIL_PROBE_RESULT).pause(1, 3);
 
     // reportType names, 1-indexed (index 0 unused) — no enum mapping is
     // exposed by the API itself, this is just what these values were
