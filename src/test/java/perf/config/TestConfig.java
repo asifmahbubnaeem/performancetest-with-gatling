@@ -28,6 +28,13 @@ public final class TestConfig {
     public static final int PROBE_POLL_INTERVAL_SECONDS = integer("probePollIntervalSeconds", 3);
     public static final int PROBE_POLL_MAX_ATTEMPTS     = integer("probePollMaxAttempts", 20);
 
+    // Process-wide cap on concurrent ProbeNow pipelines (mirrors CNS_MAX_CONCURRENT
+    // above) — the slot is held across the ProbeNow call AND its result-polling,
+    // not just the initial HTTP request, so this bounds real concurrent backend
+    // work regardless of targetRps or how long polling takes under load.
+    //during run -DprobeMaxConcurrent=12 to override the default of 5 concurrent probes.
+    public static final int PROBE_MAX_CONCURRENT = integer("probeMaxConcurrent", 5);
+
     // --- RequestReport --- 0 (default) = pick a random type (1-11) per
     // request; set -DreportType=N to pin every request to one specific type
     // instead (e.g. for a smoke test isolating one report's behavior).
