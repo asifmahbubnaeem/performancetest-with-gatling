@@ -4,6 +4,7 @@ import io.gatling.javaapi.core.ChainBuilder;
 import io.gatling.javaapi.core.FeederBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
 import perf.config.TestConfig;
+import perf.util.SlotGate;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -156,27 +157,43 @@ public final class CnsIngestionWorkflow {
     // --- The gated upload: acquire -> upload -> WAIT for completion -> release ---
     // Slot is held for the entire pipeline (upload + processing), not just
     // the HTTP call, so the concurrency cap reflects real backend load.
+    //
+    // Acquiring goes through SlotGate (tryAcquire + backoff) rather than
+    // UPLOAD_SLOTS.acquireUninterruptibly() directly — see SlotGate's javadoc.
+    // A stuck backend that holds both slots for the full POLL_MAX_ATTEMPTS
+    // window used to leave arriving uploaders blocked on a Gatling dispatcher
+    // thread; enough of those piling up froze the entire simulation, not just
+    // CNS. The wait cap here matches the longest a slot can legitimately stay
+    // held (POLL_MAX_ATTEMPTS * POLL_INTERVAL_SECONDS) — if it's not free by
+    // then, something is genuinely stuck, so this iteration is skipped rather
+    // than waited on indefinitely.
+    private static final String UPLOAD_GATE = "cnsUpload";
+    private static final int UPLOAD_SLOT_MAX_WAIT_SECONDS = POLL_MAX_ATTEMPTS * POLL_INTERVAL_SECONDS;
 
     private static final ChainBuilder UPLOAD_ONE_FILE =
-        exec(session -> { UPLOAD_SLOTS.acquireUninterruptibly(); return session; })
-        .exec(
-            http("REST_IngestCNS")
-                .post(TestConfig.INGESTION_URL + "/service/ingestion/cns")
-                .header(AUTH_HEADER, "Bearer #{authToken}")
-                .header("x-isara-customer-state", "#{customer_alias}")
-                .header("Workspace-Id", "#{tenant_id}")
-                .bodyPart(
-                    RawFileBodyPart("cns", "data/#{cnsFile}")
-                        .fileName("#{cnsFileName}")
-                        .contentType("application/zip")
-                )
-                .asMultipartForm()
-                .check(status().in(200, 201, 202))
+        exec(SlotGate.acquire(UPLOAD_SLOTS, UPLOAD_GATE, UPLOAD_SLOT_MAX_WAIT_SECONDS, POLL_INTERVAL_SECONDS))
+        .doIf(session -> !session.getBoolean(SlotGate.skippedKey(UPLOAD_GATE)))
+        .then(
+            exec(
+                http("REST_IngestCNS")
+                    .post(TestConfig.INGESTION_URL + "/service/ingestion/cns")
+                    .header(AUTH_HEADER, "Bearer #{authToken}")
+                    .header("x-isara-customer-state", "#{customer_alias}")
+                    .header("Workspace-Id", "#{tenant_id}")
+                    .bodyPart(
+                        RawFileBodyPart("cns", "data/#{cnsFile}")
+                            .fileName("#{cnsFileName}")
+                            .contentType("application/zip")
+                    )
+                    .asMultipartForm()
+                    .check(status().in(200, 201, 202))
+            )
+            .exec(POLL_UNTIL_TERMINAL)
         )
-        .exec(POLL_UNTIL_TERMINAL)
-        // release must run whether upload/poll passed or failed — this is
-        // the last step so it always executes next in the chain
-        .exec(session -> { UPLOAD_SLOTS.release(); return session; })
+        // release must run whether upload/poll passed, failed, or was skipped —
+        // this is the last step so it always executes next in the chain. It's a
+        // no-op if this iteration never actually acquired a permit (see SlotGate).
+        .exec(SlotGate.release(UPLOAD_SLOTS, UPLOAD_GATE))
         // small buffer between this user's files (real wait already
         // happened above via polling)
         .pause(5, 15);

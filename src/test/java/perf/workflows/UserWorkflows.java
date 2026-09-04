@@ -5,6 +5,7 @@ import io.gatling.javaapi.core.FeederBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
 import io.gatling.javaapi.http.HttpProtocolBuilder;
 import perf.config.TestConfig;
+import perf.util.SlotGate;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -258,19 +259,34 @@ public final class UserWorkflows {
     // WHOLE scenario for this virtual user, which would skip the release
     // step below and permanently leak that permit. Enough leaked permits
     // over a long soak run would deadlock every future PROBE_NOW_AND_WAIT
-    // call (acquireUninterruptibly() blocks forever). Same reasoning as
-    // CnsIngestionWorkflow.UPLOAD_ONE_FILE's own release-always-runs comment.
-    // A failed ProbeNow now falls through into polling instead of aborting
-    // the session; POLL_UNTIL_PROBE_RESULT is still bounded by
-    // PROBE_POLL_MAX_ATTEMPTS, so this can't hang, just runs its course and
-    // logs the existing "never reached resultStatus=Success" warning.
+    // call. Same reasoning as CnsIngestionWorkflow.UPLOAD_ONE_FILE's own
+    // release-always-runs comment. A failed ProbeNow now falls through into
+    // polling instead of aborting the session; POLL_UNTIL_PROBE_RESULT is
+    // still bounded by PROBE_POLL_MAX_ATTEMPTS, so this can't hang, just runs
+    // its course and logs the existing "never reached resultStatus=Success"
+    // warning.
+    //
+    // Acquiring goes through SlotGate (tryAcquire + backoff), not
+    // PROBE_SLOTS.acquireUninterruptibly() directly — see SlotGate's javadoc:
+    // blocking a Gatling dispatcher thread on a slow-to-free slot can freeze
+    // the ENTIRE simulation, not just this chain. Wait cap matches the
+    // longest a slot can legitimately stay held.
+    private static final String PROBE_GATE = "probeNow";
+    private static final int PROBE_SLOT_MAX_WAIT_SECONDS =
+            TestConfig.PROBE_POLL_MAX_ATTEMPTS * TestConfig.PROBE_POLL_INTERVAL_SECONDS;
+
     public static final ChainBuilder PROBE_NOW_AND_WAIT =
-            exec(session -> { PROBE_SLOTS.acquireUninterruptibly(); return session; })
-            .exec(PROBE_NOW)
-            .exec(POLL_UNTIL_PROBE_RESULT)
-            // release must run whether ProbeNow/polling passed or failed —
-            // this is the last step so it always executes next in the chain
-            .exec(session -> { PROBE_SLOTS.release(); return session; })
+            exec(SlotGate.acquire(PROBE_SLOTS, PROBE_GATE,
+                    PROBE_SLOT_MAX_WAIT_SECONDS, TestConfig.PROBE_POLL_INTERVAL_SECONDS))
+            .doIf(session -> !session.getBoolean(SlotGate.skippedKey(PROBE_GATE)))
+            .then(
+                exec(PROBE_NOW)
+                .exec(POLL_UNTIL_PROBE_RESULT)
+            )
+            // release must run whether ProbeNow/polling passed, failed, or was
+            // skipped — this is the last step so it always executes next in
+            // the chain. No-op if this iteration never acquired a permit.
+            .exec(SlotGate.release(PROBE_SLOTS, PROBE_GATE))
             .pause(1, 3);
 
     // reportType names, 1-indexed (index 0 unused) — no enum mapping is
@@ -404,6 +420,15 @@ public final class UserWorkflows {
     private static final int MAX_CONCURRENT_REPORTS = TestConfig.REPORT_MAX_CONCURRENT;
     private static final Semaphore REPORT_SLOTS = new Semaphore(MAX_CONCURRENT_REPORTS, true);
 
+    // Acquiring goes through SlotGate (tryAcquire + backoff), not
+    // REPORT_SLOTS.acquireUninterruptibly() directly — see SlotGate's javadoc:
+    // blocking a Gatling dispatcher thread on a slow-to-free slot can freeze
+    // the ENTIRE simulation, not just this chain. Wait cap matches the
+    // longest a slot can legitimately stay held.
+    private static final String REPORT_GATE = "requestReport";
+    private static final int REPORT_SLOT_MAX_WAIT_SECONDS =
+            TestConfig.REPORT_POLL_MAX_ATTEMPTS * TestConfig.REPORT_POLL_INTERVAL_SECONDS;
+
     // Before requesting any report type: check for existing data via
     // CHECK_TENANT_HAS_DATA; if none found, trigger a CNS ingestion upload
     // for this tenant instead of requesting a report guaranteed to fail.
@@ -427,12 +452,17 @@ public final class UserWorkflows {
                       // REQUEST_REPORT now falls through into polling instead of
                       // aborting the session; POLL_UNTIL_ALL_REPORTS_SUCCESS is still
                       // bounded by REPORT_POLL_MAX_ATTEMPTS, so this can't hang.
-                      exec(session -> { REPORT_SLOTS.acquireUninterruptibly(); return session; })
-                      .exec(REQUEST_REPORT)
-                      .exec(POLL_UNTIL_ALL_REPORTS_SUCCESS)
-                      // release must run whether REQUEST_REPORT/polling passed or
-                      // failed — this is the last step so it always executes next
-                      .exec(session -> { REPORT_SLOTS.release(); return session; })
+                      exec(SlotGate.acquire(REPORT_SLOTS, REPORT_GATE,
+                              REPORT_SLOT_MAX_WAIT_SECONDS, TestConfig.REPORT_POLL_INTERVAL_SECONDS))
+                      .doIf(session -> !session.getBoolean(SlotGate.skippedKey(REPORT_GATE)))
+                      .then(
+                          exec(REQUEST_REPORT)
+                          .exec(POLL_UNTIL_ALL_REPORTS_SUCCESS)
+                      )
+                      // release must run whether REQUEST_REPORT/polling passed, failed,
+                      // or was skipped — this is the last step so it always executes
+                      // next. No-op if this iteration never acquired a permit.
+                      .exec(SlotGate.release(REPORT_SLOTS, REPORT_GATE))
                       .pause(2, 5)
                   )
             );
